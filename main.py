@@ -1,99 +1,132 @@
 import os
 import pandas as pd
-from src.desbloqueador import desbloquear_pdf
-from src.extrator import extrair_dados_fatura
+from dotenv import load_dotenv  # <-- Importação nova
+from src.extractor import extract_invoice_data, validate_totals
 
-# --- Configurações ---
-PASTA_INPUT = "input"
-PASTA_OUTPUT = "output"
-SENHA_PADRAO = "97413"
+# --- CONFIGURATION ---
+load_dotenv()
 
-def processar_faturas():
-    if not os.path.exists(PASTA_INPUT):
-        print(f"❌ Erro: Pasta '{PASTA_INPUT}' não encontrada.")
+INPUT_FOLDER = "input"
+OUTPUT_FOLDER = "output"
+PDF_PASSWORD = os.getenv("PDF_PASSWORD")
+
+
+def process_invoices():
+    # Validação de Segurança antes de começar
+    if not PDF_PASSWORD:
+        print("❌ Error: 'PDF_PASSWORD' not found in .env file.")
+        print("   Please create a .env file with PDF_PASSWORD=your_password")
         return
 
-    arquivos = [f for f in os.listdir(PASTA_INPUT) if f.lower().endswith('.pdf')]
-
-    if not arquivos:
-        print(f"⚠️  Nenhum arquivo PDF encontrado em '{PASTA_INPUT}'.")
+    if not os.path.exists(INPUT_FOLDER):
+        print(f"❌ Error: Folder '{INPUT_FOLDER}' not found.")
         return
 
-    print(f"📂 Encontrados {len(arquivos)} arquivos.\n")
+    if not os.path.exists(OUTPUT_FOLDER):
+        os.makedirs(OUTPUT_FOLDER)
 
-    lista_faturas = []
-    lista_medicao = []
+    files = [f for f in os.listdir(INPUT_FOLDER) if f.lower().endswith(".pdf")]
 
-    for arquivo in arquivos:
-        print(f"--- 📄 Processando: {arquivo} ---")
+    if not files:
+        print(f"⚠️  No PDF files found in '{INPUT_FOLDER}'.")
+        return
 
-        caminho_desbloqueado = desbloquear_pdf(arquivo, SENHA_PADRAO, PASTA_INPUT, PASTA_OUTPUT)
+    print(f"📂 Found {len(files)} files.\n")
 
-        if caminho_desbloqueado:
-            dados = extrair_dados_fatura(caminho_desbloqueado)
+    invoices_list = []
+    measurements_list = []
 
-            if dados:
-                ref = dados['referencia']
-                print(f"   ✅ Referência: {ref}")
+    for file_name in files:
+        print(f"--- 📄 Processing: {file_name} ---")
 
-                # 1. Processa Itens da Fatura
-                if dados['itens']:
-                    print(f"   ⚡ Itens Financeiros: {len(dados['itens'])}")
-                    for item in dados['itens']:
-                        item['Arquivo'] = arquivo
-                        item['Referência'] = ref
-                        lista_faturas.append(item)
+        file_path = os.path.join(INPUT_FOLDER, file_name)
 
-                # 2. Processa Medição
-                if dados['medicao']:
-                    print(f"   📏 Itens de Medição:  {len(dados['medicao'])}")
-                    for item_med in dados['medicao']:
-                        item_med['Arquivo'] = arquivo
-                        item_med['Referência'] = ref
-                        lista_medicao.append(item_med)
-                else:
-                    print("   ⚠️  Nenhuma medição encontrada.")
+        # Passamos a senha carregada do .env
+        data = extract_invoice_data(file_path, password=PDF_PASSWORD)
+
+        if data:
+            ref = data["reference"]
+            print(f"   ✅ Reference: {ref}")
+
+            # 1. Process Financial Items
+            if data["items"]:
+                print(f"   ⚡ Financial Items: {len(data['items'])}")
+
+                total_sum = validate_totals(data)
+                print(f"   💰 Calculated Total: R$ {total_sum}")
+
+                for item in data["items"]:
+                    item["Arquivo"] = file_name
+                    item["Referência"] = ref
+                    invoices_list.append(item)
+
+            # 2. Process Measurement Data
+            if data["measurement"]:
+                print(f"   📏 Measurement Items: {len(data['measurement'])}")
+                for item_med in data["measurement"]:
+                    item_med["Arquivo"] = file_name
+                    item_med["Referência"] = ref
+                    measurements_list.append(item_med)
+            else:
+                print("   ⚠️  No measurement data found.")
 
         print("")
 
-    # --- SALVAMENTO (Excel com Múltiplas Abas) ---
-    if lista_faturas or lista_medicao:
-        arquivo_excel = os.path.join(PASTA_OUTPUT, "relatorio_completo_enel.xlsx")
+    # --- SAVE REPORTS ---
+    if invoices_list or measurements_list:
+        excel_path = os.path.join(OUTPUT_FOLDER, "enel_full_report.xlsx")
 
-        with pd.ExcelWriter(arquivo_excel, engine='openpyxl') as writer:
-
-            # Aba 1: Fatura Detalhada
-            if lista_faturas:
-                df_fatura = pd.DataFrame(lista_faturas)
-                # Ordenação das colunas
-                cols_fat = ["Arquivo", "Referência", "Itens de Fatura", "Unid.", "Quant.",
-                           "Preço unit (R$) com tributos", "Valor (R$)", "PIS/COFINS",
-                           "Base Calc ICMS (R$)", "Alíquota ICMS", "ICMS", "Tarifa unit (R$)"]
+        with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+            if invoices_list:
+                df_invoice = pd.DataFrame(invoices_list)
+                cols_inv = [
+                    "Arquivo",
+                    "Referência",
+                    "Itens de Fatura",
+                    "Unid.",
+                    "Quant.",
+                    "Preço unit (R$) com tributos",
+                    "Valor (R$)",
+                    "PIS/COFINS",
+                    "Base Calc ICMS (R$)",
+                    "Alíquota ICMS",
+                    "ICMS",
+                    "Tarifa unit (R$)",
+                ]
                 try:
-                    df_fatura = df_fatura[cols_fat]
-                except KeyError: pass
-                df_fatura.to_excel(writer, sheet_name="Fatura Detalhada", index=False)
+                    df_invoice = df_invoice[cols_inv]
+                except KeyError:
+                    pass
+                df_invoice.to_excel(writer, sheet_name="Invoice Details", index=False)
 
-            # Aba 2: Medição
-            if lista_medicao:
-                df_medicao = pd.DataFrame(lista_medicao)
-                # Ordenação das colunas
-                cols_med = ["Arquivo", "Referência", "N° Medidor", "P.Horário/Segmento",
-                           "Data Leitura (Anterior)", "Leitura (Anterior)",
-                           "Data Leitura (Atual)", "Leitura (Atual)",
-                           "Fator Multiplicador", "Consumo kWh", "N° Dias"]
+            if measurements_list:
+                df_measure = pd.DataFrame(measurements_list)
+                cols_med = [
+                    "Arquivo",
+                    "Referência",
+                    "N° Medidor",
+                    "P.Horário/Segmento",
+                    "Data Leitura (Anterior)",
+                    "Leitura (Anterior)",
+                    "Data Leitura (Atual)",
+                    "Leitura (Atual)",
+                    "Fator Multiplicador",
+                    "Consumo kWh",
+                    "N° Dias",
+                ]
                 try:
-                    df_medicao = df_medicao[cols_med]
-                except KeyError: pass
-                df_medicao.to_excel(writer, sheet_name="Medicao", index=False)
+                    df_measure = df_measure[cols_med]
+                except KeyError:
+                    pass
+                df_measure.to_excel(writer, sheet_name="Measurement", index=False)
 
-        print("="*60)
-        print(f"📊 Relatório Completo salvo em: {arquivo_excel}")
-        print("   (Verifique as abas 'Fatura Detalhada' e 'Medicao')")
-        print("="*60)
+        print("=" * 60)
+        print(f"📊 Full Report saved at: {excel_path}")
+        print("=" * 60)
 
     else:
-        print("🏁 Nenhum dado extraído.")
+        print("🏁 No data extracted.")
+
 
 if __name__ == "__main__":
-    processar_faturas()
+    process_invoices()
