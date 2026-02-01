@@ -8,7 +8,7 @@ def clean_line(line):
     """
     Separates the raw string into: Description | Unit | Values String
     """
-    # 1. Remove Historical Data (e.g., SET25 512.00...)
+    # 1. Remove Historical Data
     history_pattern = (
         r"\s(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)[\s\/]?\d{2}.*$"
     )
@@ -17,7 +17,7 @@ def clean_line(line):
     if not cleaned_line:
         return None
 
-    # 2. Try to find known units (Pivot)
+    # 2. Try to find known units
     unit_match = re.search(
         r"^(.*?)\s+(kWh|kW|dias|unid|un)\s+(.*)$", cleaned_line, re.IGNORECASE
     )
@@ -29,7 +29,7 @@ def clean_line(line):
             "type": "standard",
         }
 
-    # 3. Items without unit (Simple items)
+    # 3. Simple items
     number_match = re.search(r"^(.*?)\s+(\d+[.,]\d{2}.*)$", cleaned_line)
     if number_match:
         return {
@@ -102,9 +102,6 @@ def process_values(values_str, item_type):
 
 
 def extract_measurement(full_text):
-    """
-    Extracts the 'EQUIPAMENTOS DE MEDIÇÃO' table.
-    """
     measurement_items = []
     lines = full_text.split("\n")
     is_capturing = False
@@ -115,18 +112,15 @@ def extract_measurement(full_text):
 
     for line in lines:
         line_upper = line.upper().strip()
-
         if "EQUIPAMENTOS DE MEDIÇÃO" in line_upper:
             is_capturing = True
             continue
-
         if is_capturing and (
             "MÊS/ANO" in line_upper
             or "HISTÓRICO" in line_upper
             or "PIS/PASEP" in line_upper
         ):
             break
-
         if is_capturing:
             match = regex_measure.search(line)
             if match:
@@ -143,7 +137,6 @@ def extract_measurement(full_text):
                         "N° Dias": match.group(9),
                     }
                 )
-
     return measurement_items
 
 
@@ -151,21 +144,41 @@ def validate_totals(data):
     total_calculated = 0.0
     for item in data["items"]:
         try:
-            val_str = item.get("Valor (R$)", "0").replace(".", "").replace(",", ".")
-            val_float = float(val_str.replace("R$", "").strip())
-            if item.get("Valor (R$)", "").endswith("-"):
-                val_float = val_float * -1
+            # Pega o valor bruto (ex: "49,78-" ou "150,00")
+            raw_val = item.get("Valor (R$)", "0").strip()
+
+            # Verifica se é negativo (Enel usa o sinal no final: "49,78-")
+            is_negative = raw_val.endswith("-") or raw_val.startswith("-")
+
+            # Limpa a string para ficar no formato float padrão (1000.00)
+            # 1. Remove o sinal de menos e R$
+            clean_val = raw_val.replace("-", "").replace("R$", "").strip()
+            # 2. Remove ponto de milhar e troca vírgula decimal por ponto
+            clean_val = clean_val.replace(".", "").replace(",", ".")
+
+            val_float = float(clean_val)
+
+            # Aplica o sinal negativo se necessário
+            if is_negative:
+                val_float *= -1
+
             total_calculated += val_float
         except ValueError:
             continue
+
     return round(total_calculated, 2)
 
 
 # --- MAIN EXTRACTION FUNCTION ---
 
 
-def extract_invoice_data(file_path, password=None):  # <--- ATUALIZADO AQUI
-    data = {"reference": "Not Found", "items": [], "measurement": []}
+def extract_invoice_data(file_path, password=None):
+    data = {
+        "reference": "Not Found",
+        "client_id": "Not Found",
+        "items": [],
+        "measurement": [],
+    }
 
     print(f"🔍 Analyzing: {file_path}")
 
@@ -188,20 +201,34 @@ def extract_invoice_data(file_path, password=None):  # <--- ATUALIZADO AQUI
     ]
 
     try:
-        # pdfplumber aceita a senha nativamente, sem precisar salvar arquivo extra
         with pdfplumber.open(file_path, password=password) as pdf:
             page = pdf.pages[0]
             text = page.extract_text(layout=True)
 
-            # 1. Reference
+            # 1. Reference (Mês/Ano)
             ref_match = re.search(r"(?<!\d/)\b(\d{2}/\d{4})\b", text)
             if ref_match:
                 data["reference"] = ref_match.group(1)
 
-            # 2. Measurement Data
+            # 2. Client ID Extraction (ESTRATÉGIA REFORÇADA)
+            # Estratégia A: Procura a frase padrão do rodapé "utilizando o código XXXXX"
+            # Esta é muito mais segura pois é uma frase gramatical, não depende de tabela.
+            code_match = re.search(
+                r"utilizando\s+o\s+código\s+(\d+)", text, re.IGNORECASE
+            )
+
+            if code_match:
+                data["client_id"] = code_match.group(1)
+            else:
+                # Estratégia B (Fallback): Tenta encontrar pelo posicionamento visual acima da data
+                visual_match = re.search(r"\b(\d{7,12})\s*\n\s*\d{2}/\d{4}", text)
+                if visual_match:
+                    data["client_id"] = visual_match.group(1)
+
+            # 3. Measurement Data
             data["measurement"] = extract_measurement(text)
 
-            # 3. Financial Items
+            # 4. Financial Items
             lines = text.split("\n")
             is_capturing = False
             temp_items = []
@@ -247,7 +274,7 @@ def extract_invoice_data(file_path, password=None):  # <--- ATUALIZADO AQUI
                         }
                         temp_items.append(item)
 
-            # 4. Fallback Strategy
+            # 5. Fallback Strategy
             if not temp_items:
                 keywords = [
                     "ENERGIA",
