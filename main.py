@@ -21,7 +21,8 @@ def processar_faturas():
 
     print(f"📂 Encontrados {len(arquivos)} arquivos.\n")
 
-    relatorio_geral = []
+    lista_faturas = []
+    lista_medicao = []
 
     for arquivo in arquivos:
         print(f"--- 📄 Processando: {arquivo} ---")
@@ -31,64 +32,65 @@ def processar_faturas():
         if caminho_desbloqueado:
             dados = extrair_dados_fatura(caminho_desbloqueado)
 
-            if dados and dados['itens']:
-                print(f"   ✅ Referência: {dados['referencia']}")
-                print(f"   ⚡ Itens capturados: {len(dados['itens'])}")
+            if dados:
+                ref = dados['referencia']
+                print(f"   ✅ Referência: {ref}")
 
-                for item in dados['itens']:
-                    # Adiciona metadados do arquivo
-                    item['Arquivo'] = arquivo
-                    item['Referência'] = dados['referencia']
-                    relatorio_geral.append(item)
-            else:
-                print("   ⚠️  Nenhum item encontrado.")
+                # 1. Processa Itens da Fatura
+                if dados['itens']:
+                    print(f"   ⚡ Itens Financeiros: {len(dados['itens'])}")
+                    for item in dados['itens']:
+                        item['Arquivo'] = arquivo
+                        item['Referência'] = ref
+                        lista_faturas.append(item)
+
+                # 2. Processa Medição
+                if dados['medicao']:
+                    print(f"   📏 Itens de Medição:  {len(dados['medicao'])}")
+                    for item_med in dados['medicao']:
+                        item_med['Arquivo'] = arquivo
+                        item_med['Referência'] = ref
+                        lista_medicao.append(item_med)
+                else:
+                    print("   ⚠️  Nenhuma medição encontrada.")
+
         print("")
 
-    # --- SALVAMENTO ---
-    if relatorio_geral:
-        df = pd.DataFrame(relatorio_geral)
+    # --- SALVAMENTO (Excel com Múltiplas Abas) ---
+    if lista_faturas or lista_medicao:
+        arquivo_excel = os.path.join(PASTA_OUTPUT, "relatorio_completo_enel.xlsx")
 
-        # Define a ordem exata das colunas que você pediu
-        colunas_ordenadas = [
-            "Arquivo",
-            "Referência",
-            "Itens de Fatura",
-            "Unid.",
-            "Quant.",
-            "Preço unit (R$) com tributos",
-            "Valor (R$)",
-            "PIS/COFINS",
-            "Base Calc ICMS (R$)",
-            "Alíquota ICMS",
-            "ICMS",
-            "Tarifa unit (R$)"
-        ]
+        with pd.ExcelWriter(arquivo_excel, engine='openpyxl') as writer:
 
-        # Reorganiza o DataFrame (garante que só essas colunas apareçam)
-        # O try/except evita erro se alguma coluna faltar por acaso
-        try:
-            df = df[colunas_ordenadas]
-        except KeyError as e:
-            print(f"⚠️ Aviso: Alguma coluna esperada não foi gerada: {e}")
+            # Aba 1: Fatura Detalhada
+            if lista_faturas:
+                df_fatura = pd.DataFrame(lista_faturas)
+                # Ordenação das colunas
+                cols_fat = ["Arquivo", "Referência", "Itens de Fatura", "Unid.", "Quant.",
+                           "Preço unit (R$) com tributos", "Valor (R$)", "PIS/COFINS",
+                           "Base Calc ICMS (R$)", "Alíquota ICMS", "ICMS", "Tarifa unit (R$)"]
+                try:
+                    df_fatura = df_fatura[cols_fat]
+                except KeyError: pass
+                df_fatura.to_excel(writer, sheet_name="Fatura Detalhada", index=False)
 
-        # Visualização Terminal
-        print("\n" + "="*100)
-        print("RESUMO DETALHADO")
-        print("="*100)
-        pd.set_option('display.max_columns', None)
-        pd.set_option('display.max_colwidth', 20)
-        print(df[["Itens de Fatura", "Quant.", "Valor (R$)", "ICMS"]].to_string(index=False)) # Mostra as principais
-        print("="*100 + "\n")
+            # Aba 2: Medição
+            if lista_medicao:
+                df_medicao = pd.DataFrame(lista_medicao)
+                # Ordenação das colunas
+                cols_med = ["Arquivo", "Referência", "N° Medidor", "P.Horário/Segmento",
+                           "Data Leitura (Anterior)", "Leitura (Anterior)",
+                           "Data Leitura (Atual)", "Leitura (Atual)",
+                           "Fator Multiplicador", "Consumo kWh", "N° Dias"]
+                try:
+                    df_medicao = df_medicao[cols_med]
+                except KeyError: pass
+                df_medicao.to_excel(writer, sheet_name="Medicao", index=False)
 
-        # Excel
-        arquivo_excel = os.path.join(PASTA_OUTPUT, "relatorio_enel_detalhado.xlsx")
-        df.to_excel(arquivo_excel, index=False)
-        print(f"📊 Excel completo salvo em: {arquivo_excel}")
-
-        # CSV
-        arquivo_csv = os.path.join(PASTA_OUTPUT, "dados_fatura_detalhado.csv")
-        df.to_csv(arquivo_csv, index=False, sep=';', encoding='utf-8-sig')
-        print(f"💾 CSV salvo em:           {arquivo_csv}")
+        print("="*60)
+        print(f"📊 Relatório Completo salvo em: {arquivo_excel}")
+        print("   (Verifique as abas 'Fatura Detalhada' e 'Medicao')")
+        print("="*60)
 
     else:
         print("🏁 Nenhum dado extraído.")
