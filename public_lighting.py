@@ -32,7 +32,7 @@ def render_public_lighting(df_fin_view, df_med_view):
             df_lei_display["Faixa"] = df_lei_display.apply(
                 lambda x: f"{int(x['Min kWh'])} a {int(x['Max kWh'])} kWh" if x['Max kWh'] < 99999 else f"Acima de {int(x['Min kWh'])}", axis=1
             )
-            # Multiplica por 100 para exibir bonito na tabela de consulta (ex: 20.72%)
+            # Multiplica por 100 para exibir bonito na tabela de consulta
             df_lei_display["Alíquota (%)"] = df_lei_display["Alíquota"].apply(lambda x: f"{x*100:.2f}%")
 
             st.dataframe(df_lei_display[["Faixa", "Alíquota (%)"]], use_container_width=True, hide_index=True)
@@ -59,48 +59,73 @@ def render_public_lighting(df_fin_view, df_med_view):
         # Merge (Junta Valor Pago + Consumo)
         df_audit = pd.merge(df_cip, df_cons, on="Referência", how="inner")
 
-        # --- CÁLCULOS DAS COLUNAS (CORRIGIDOS) ---
-
-        # 1. Alíquota Lei (Multiplicamos por 100 para virar porcentagem de leitura humana)
-        # Ex: 0.2072 vira 20.72
+        # --- CÁLCULOS PRINCIPAIS ---
         df_audit["Alíquota Lei"] = df_audit["Consumo kWh"].apply(lambda x: get_law_rate(x)) * 100
-
-        # 2. R$ Lei (Quanto deveria ter pago)
         df_audit["R$ Lei"] = df_audit["Consumo kWh"].apply(lambda x: get_cip_expected_value(x))
 
-        # 3. Alíquota Paga (Multiplicamos por 100 aqui também)
-        # Se R$ Pago for igual a R$ Lei, o resultado será igual à Alíquota Lei (ex: 20.72)
+        # Alíquota Paga (Cálculo Reverso)
         df_audit["Alíquota paga"] = df_audit.apply(
             lambda row: (row["R$ Pago"] / row["R$ Lei"] * row["Alíquota Lei"]) if row["R$ Lei"] > 0 else 0.0,
             axis=1
         )
 
-        # 4. Desvio (Diferença em Reais)
         df_audit["Desvio"] = df_audit["R$ Pago"] - df_audit["R$ Lei"]
 
-        # 5. Veredito (Status)
         df_audit["Veredito"] = df_audit["Desvio"].apply(
             lambda x: "🔴 Acima" if x > 0.10 else ("🟢 Abaixo" if x < -0.10 else "✅ OK")
         )
 
-        # --- EXIBIÇÃO ---
+        # --- KPI CARDS (RESUMO DA AUDITORIA) ---
+        st.divider()
+        st.markdown("### 📊 Resumo Executivo da Auditoria")
+
+        # Cálculos de Totais
+        total_pago = df_audit["R$ Pago"].sum()
+        total_lei = df_audit["R$ Lei"].sum()
+        diff_total = total_pago - total_lei
+        media_aliquota_real = df_audit["Alíquota paga"].mean()
+        media_aliquota_lei = df_audit["Alíquota Lei"].mean()
+
+        k1, k2, k3, k4 = st.columns(4)
+
+        k1.metric("Total Pago (Período)", f"R$ {total_pago:,.2f}")
+        k2.metric("Valor Justo (Lei)", f"R$ {total_lei:,.2f}")
+
+        # Se diferença positiva (vermelho) = pagou a mais. Negativa (verde) = pagou a menos.
+        k3.metric(
+            "Divergência Total",
+            f"R$ {diff_total:,.2f}",
+            delta=f"{diff_total:,.2f}",
+            delta_color="inverse" # Inverte: Valor alto é ruim (vermelho)
+        )
+
+        k4.metric(
+            "Alíquota Média Real",
+            f"{media_aliquota_real:.2f}%",
+            delta=f"{(media_aliquota_real - media_aliquota_lei):.2f}% vs Lei",
+            delta_color="inverse"
+        )
+
+        st.divider()
+        # ---------------------------------------
+
+        # --- EXIBIÇÃO DETALHADA ---
         col1, col2 = st.columns([1.5, 1])
 
         with col1:
-            st.write("### 🔍 Comparativo Visual")
-            # Gráfico de Barras
+            st.write("### 🔍 Comparativo Mensal")
             df_melted = df_audit.melt(id_vars=["Referência"], value_vars=["R$ Pago", "R$ Lei"], var_name="Tipo", value_name="Valor (R$)")
             fig = px.bar(
                 df_melted, x="Referência", y="Valor (R$)", color="Tipo", barmode="group",
-                title="Valor Pago vs Valor da Lei",
+                # title="Valor Pago vs Valor da Lei",
                 color_discrete_map={"R$ Pago": "#EF553B", "R$ Lei": "#00CC96"}, height=350
             )
+            fig.update_layout(margin=dict(t=10, b=0, l=0, r=0)) # Ajuste de margem
             st.plotly_chart(fig, use_container_width=True)
 
         with col2:
             st.write("### 📋 Detalhamento")
 
-            # Seleção e Ordenação das Colunas
             cols_show = [
                 "Referência",
                 "Consumo kWh",
@@ -115,24 +140,15 @@ def render_public_lighting(df_fin_view, df_med_view):
             st.dataframe(
                 df_audit[cols_show],
                 column_config={
-                    "Referência": st.column_config.TextColumn("Referência"),
-                    "Consumo kWh": st.column_config.NumberColumn("Consumo", format="%d kWh"),
-                    # O formato %.2f%% apenas adiciona o símbolo %, ele não multiplica.
-                    # Como já multiplicamos por 100 no código acima, agora exibirá "20.72%" corretamente.
-                    "Alíquota Lei": st.column_config.NumberColumn("Alíq. Lei", format="%.2f%%"),
-                    "Alíquota paga": st.column_config.NumberColumn("Alíq. Real", format="%.2f%%"),
-                    "R$ Lei": st.column_config.NumberColumn("R$ Lei", format="R$ %.2f"),
-                    "R$ Pago": st.column_config.NumberColumn("R$ Pago", format="R$ %.2f"),
-                    "Desvio": st.column_config.NumberColumn("Desvio (R$)", format="%.2f"),
-                    "Veredito": st.column_config.TextColumn("Veredito"),
+                    "Referência": st.column_config.TextColumn("Mês"),
+                    "Consumo kWh": st.column_config.NumberColumn("Consumo", format="%d"),
+                    "Alíquota Lei": st.column_config.NumberColumn("Aliq. Lei", format="%.2f%%"),
+                    "Alíquota paga": st.column_config.NumberColumn("Aliq. Real", format="%.2f%%"),
+                    "R$ Lei": st.column_config.NumberColumn("Lei", format="R$ %.2f"),
+                    "R$ Pago": st.column_config.NumberColumn("Pago", format="R$ %.2f"),
+                    "Desvio": st.column_config.NumberColumn("Diff", format="%.2f"),
+                    "Veredito": st.column_config.TextColumn("Status"),
                 },
                 hide_index=True,
                 use_container_width=True
             )
-
-            if not df_audit.empty:
-                avg_diff = df_audit["Desvio"].mean()
-                if abs(avg_diff) < 0.10:
-                    st.success("✅ A cobrança está matematicamente correta.")
-                else:
-                    st.warning(f"⚠️ Diferença média de R$ {avg_diff:.2f} por fatura.")
