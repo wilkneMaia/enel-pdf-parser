@@ -1,153 +1,224 @@
 import os
 import pandas as pd
 from dotenv import load_dotenv
-from src.extractor import extract_invoice_data, validate_totals
+import logging
+from datetime import datetime
+import time
+import json  # <--- Importante para o novo log
 
-# --- CONFIGURAÇÃO ---
+# Tenta importar o extrator
+try:
+    from extractor import extract_invoice_data
+except ImportError:
+    from src.extractor import extract_invoice_data
+
+# --- 1. CONFIGURAÇÃO DE LOGS (Visual/Humano) ---
+if not os.path.exists("logs"):
+    os.makedirs("logs")
+# Log para leitura humana (txt)
+log_file_txt = datetime.now().strftime("logs/execucao_%Y-%m-%d.log")
+# Log para leitura de máquina (jsonl) - Futuro Dashboard
+log_file_json = "logs/historico_geral.jsonl"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(message)s",
+    datefmt="%H:%M:%S",
+    handlers=[
+        logging.FileHandler(log_file_txt, encoding="utf-8"),
+        logging.StreamHandler(),
+    ],
+)
+# -------------------------------
+
 load_dotenv()
 
-INPUT_FOLDER = "input"
-OUTPUT_FOLDER = "output"
-PDF_PASSWORD = os.getenv("PDF_PASSWORD")
 
-# --- CONVERSOR UNIVERSAL (A Solução Definitiva) ---
 def universal_converter(val):
-    """
-    Converte qualquer formato numérico (BR ou US) para float.
-    - '220,79'  -> 220.79
-    - '512.0'   -> 512.0
-    - '49,90-'  -> -49.90
-    - '1.200,00'-> 1200.00
-    """
     if pd.isna(val) or str(val).strip() == "":
         return 0.0
-
-    # 1. Normalização Básica
-    s = str(val).strip().upper()
-
-    # 2. Detecção de Sinal Negativo (Enel usa no final: "49,78-")
-    sign = -1.0 if '-' in s else 1.0
-    s = s.replace('-', '').replace('R$', '').strip()
-
-    # 3. Decisão de Formato Inteligente
-    if ',' in s:
-        # Se tem vírgula, assumimos formato BR (Decimal = Vírgula)
-        # Ex: "1.200,50" -> Tira ponto, troca vírgula por ponto
-        s = s.replace('.', '').replace(',', '.')
-    else:
-        # Se NÃO tem vírgula, assumimos formato US ou Inteiro Simples
-        # Ex: "512.0" -> Mantém o ponto
-        # Ex: "1200"  -> Mantém
-        pass
-
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip().upper().replace("R$", "").replace(" ", "").replace("-", "")
+    if "," in s:
+        s = s.replace(".", "").replace(",", ".")
     try:
+        sign = -1.0 if "-" in str(val) else 1.0
         return float(s) * sign
     except ValueError:
-        # Se falhar, retorna 0.0 mas avisa no log se for algo estranho
-        # print(f"⚠️ Falha ao converter: {val}")
         return 0.0
 
-def process_invoices():
-    if not PDF_PASSWORD:
-        print("❌ Erro: 'PDF_PASSWORD' não encontrado no .env")
+
+# --- NOVO: SALVA O LOG PARA O FUTURO DASHBOARD ---
+def salvar_log_estruturado(dados_evento):
+    """
+    Grava uma linha JSON no arquivo historico_geral.jsonl.
+    Isso permitirá criar filtros de data, cliente e valor no futuro.
+    """
+    try:
+        with open(log_file_json, "a", encoding="utf-8") as f:
+            # Adiciona timestamp automático
+            dados_evento["timestamp"] = datetime.now().isoformat()
+            # Grava como JSON numa única linha
+            f.write(json.dumps(dados_evento, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logging.error(f"Erro ao salvar log estruturado: {e}")
+
+
+# --- RELATÓRIO VISUAL (MANTIDO) ---
+def log_visual_report(filename, data):
+    client = data.get("client_id", "N/A")
+    ref = data.get("reference", "N/A")
+    items = data.get("items", [])
+    measurements = data.get("measurement", [])
+
+    total_fin = sum(universal_converter(i.get("Valor (R$)")) for i in items)
+
+    # Lógica de Consumo vs Injeção
+    consumo_ativo = 0.0
+    energia_injetada = 0.0
+    for m in measurements:
+        kwh = universal_converter(m.get("Consumo kWh"))
+        segmento = str(m.get("P.Horário/Segmento", "")).upper()
+        if "INJ" in segmento:
+            energia_injetada += kwh
+        else:
+            consumo_ativo += kwh
+
+    # Linha extra para injeção
+    txt_injecao = ""
+    if energia_injetada > 0:
+        txt_injecao = f"\n   ☀️ Injetado:     {energia_injetada:,.0f} kWh"
+
+    # 1. Mostra no Terminal (Bonito)
+    msg = (
+        f"\n{'=' * 50}"
+        f"\n📄 ARQUIVO: {filename}"
+        f"\n{'=' * 50}"
+        f"\n   ✅ Status:       Sucesso"
+        f"\n   🏠 Cliente:      {client}"
+        f"\n   📅 Referência:   {ref}"
+        f"\n   💰 Valor Total:  R$ {total_fin:,.2f}"
+        f"\n   ⚡ Consumo Real: {consumo_ativo:,.0f} kWh{txt_injecao}"
+        f"\n{'-' * 50}"
+    )
+    logging.info(msg)
+
+    # 2. Salva no JSON Estruturado (Dados Puros para Dashboard)
+    # Aqui montamos o dicionário que o seu futuro dashboard vai ler
+    log_data = {
+        "arquivo": filename,
+        "status": "sucesso",
+        "client_id": client,
+        "referencia": ref,
+        "valor_total": total_fin,
+        "consumo_kwh": consumo_ativo,
+        "injesao_kwh": energia_injetada,
+        "qtd_itens": len(items),
+    }
+    salvar_log_estruturado(log_data)
+
+
+def main():
+    start_time = time.time()
+    logging.info("\n🚀 INICIANDO PROCESSAMENTO...\n")
+
+    input_folder = "input"
+    output_folder = "output"
+    pdf_password = os.getenv("PDF_PASSWORD")
+
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    pdf_files = [f for f in os.listdir(input_folder) if f.lower().endswith(".pdf")]
+
+    if not pdf_files:
+        logging.warning("⚠️ Nenhum arquivo PDF encontrado.")
         return
 
-    if not os.path.exists(INPUT_FOLDER):
-        print(f"❌ Erro: Pasta '{INPUT_FOLDER}' não encontrada.")
-        return
+    all_invoices = []
+    all_measurements = []
+    sucessos = 0
+    erros = 0
 
-    if not os.path.exists(OUTPUT_FOLDER):
-        os.makedirs(OUTPUT_FOLDER)
+    for filename in pdf_files:
+        file_path = os.path.join(input_folder, filename)
 
-    files = [f for f in os.listdir(INPUT_FOLDER) if f.lower().endswith('.pdf')]
+        try:
+            data = extract_invoice_data(file_path, pdf_password)
 
-    if not files:
-        print(f"⚠️  Nenhum PDF encontrado em '{INPUT_FOLDER}'.")
-        return
+            if data and data.get("items"):
+                # Log Visual + Log Estruturado
+                log_visual_report(filename, data)
 
-    print(f"📂 Encontrados {len(files)} arquivos.\n")
+                # Consolidação
+                client_id = data.get("client_id")
+                reference = data.get("reference")
 
-    invoices_list = []
-    measurements_list = []
+                for item in data.get("items", []):
+                    item["Nº do Cliente"] = client_id
+                    item["Referência"] = reference
+                    all_invoices.append(item)
 
-    for file_name in files:
-        print(f"--- 📄 Processando: {file_name} ---")
+                for meas in data.get("measurement", []):
+                    meas["Nº do Cliente"] = client_id
+                    meas["Referência"] = reference
+                    all_measurements.append(meas)
 
-        file_path = os.path.join(INPUT_FOLDER, file_name)
-        data = extract_invoice_data(file_path, password=PDF_PASSWORD)
-
-        if data:
-            ref = data['reference']
-            client_id = data['client_id']
-
-            print(f"   ✅ Referência: {ref}")
-            print(f"   🏠 ID Cliente: {client_id}")
-
-            # --- Faturas ---
-            if data['items']:
-                print(f"   ⚡ Itens Financeiros: {len(data['items'])}")
-
-                # Validação no Terminal (Debug)
-                total_debug = sum([universal_converter(i.get('Valor (R$)', '0')) for i in data['items']])
-                print(f"   💰 Total Validado (Main): R$ {total_debug:.2f}")
-
-                for item in data['items']:
-                    item['Nº do Cliente'] = client_id
-                    item['Arquivo'] = file_name
-                    item['Referência'] = ref
-                    invoices_list.append(item)
-
-            # --- Medição ---
-            if data['measurement']:
-                print(f"   📏 Itens de Medição: {len(data['measurement'])}")
-                for item_med in data['measurement']:
-                    item_med['Nº do Cliente'] = client_id
-                    item_med['Arquivo'] = file_name
-                    item_med['Referência'] = ref
-                    measurements_list.append(item_med)
+                sucessos += 1
             else:
-                print("   ⚠️  Nenhuma medição encontrada.")
+                logging.warning(f"⚠️ {filename}: Vazio/Erro.")
+                # Log de Erro Estruturado
+                salvar_log_estruturado(
+                    {
+                        "arquivo": filename,
+                        "status": "erro_vazio",
+                        "detalhe": "Extrator retornou vazio",
+                    }
+                )
+                erros += 1
 
-        print("")
+        except Exception as e:
+            logging.error(f"❌ {filename}: Erro Fatal - {str(e)}", exc_info=True)
+            # Log de Erro Estruturado
+            salvar_log_estruturado(
+                {"arquivo": filename, "status": "erro_fatal", "detalhe": str(e)}
+            )
+            erros += 1
 
-    # --- SALVAR PARQUET (Limpo e Convertido) ---
-    if invoices_list or measurements_list:
-        print("💾 Salvando arquivos Parquet...")
+    # Salvamento Parquet (Mantido)
+    if all_invoices:
+        df_inv = pd.DataFrame(all_invoices)
+        for col in [
+            "Quant.",
+            "Preço unit (R$) com tributos",
+            "Valor (R$)",
+            "PIS/COFINS",
+            "Base Calc ICMS (R$)",
+            "Alíquota ICMS",
+            "ICMS",
+            "Tarifa unit (R$)",
+        ]:
+            if col in df_inv.columns:
+                df_inv[col] = df_inv[col].apply(universal_converter)
+        df_inv.to_parquet(os.path.join(output_folder, "faturas.parquet"), index=False)
 
-        # 1. FATURAS
-        if invoices_list:
-            df_inv = pd.DataFrame(invoices_list)
+    if all_measurements:
+        df_meas = pd.DataFrame(all_measurements)
+        for col in [
+            "Leitura (Anterior)",
+            "Leitura (Atual)",
+            "Fator Multiplicador",
+            "Consumo kWh",
+        ]:
+            if col in df_meas.columns:
+                df_meas[col] = df_meas[col].apply(universal_converter)
+        df_meas.to_parquet(os.path.join(output_folder, "medicao.parquet"), index=False)
 
-            # Aplica o conversor universal em colunas numéricas
-            cols_num = ['Quant.', 'Preço unit (R$) com tributos', 'Valor (R$)',
-                        'PIS/COFINS', 'Base Calc ICMS (R$)', 'Alíquota ICMS',
-                        'ICMS', 'Tarifa unit (R$)']
+    elapsed_time = time.time() - start_time
+    logging.info(
+        f"🏁 FIM: {sucessos} Sucessos | {erros} Erros | Tempo: {elapsed_time:.2f}s"
+    )
 
-            for col in cols_num:
-                if col in df_inv.columns:
-                    df_inv[col] = df_inv[col].apply(universal_converter)
-
-            output_inv = os.path.join(OUTPUT_FOLDER, "faturas.parquet")
-            df_inv.to_parquet(output_inv, index=False)
-            print(f"   ✅ Faturas salvas: {output_inv}")
-
-        # 2. MEDIÇÃO
-        if measurements_list:
-            df_meas = pd.DataFrame(measurements_list)
-
-            # Aplica o mesmo conversor (funciona para ponto também!)
-            cols_tec = ['Leitura (Anterior)', 'Leitura (Atual)', 'Fator Multiplicador', 'Consumo kWh']
-            for col in cols_tec:
-                if col in df_meas.columns:
-                    df_meas[col] = df_meas[col].apply(universal_converter)
-
-            output_meas = os.path.join(OUTPUT_FOLDER, "medicao.parquet")
-            df_meas.to_parquet(output_meas, index=False)
-            print(f"   ✅ Medições salvas: {output_meas}")
-
-        print("="*60)
-    else:
-        print("🏁 Nenhum dado extraído.")
 
 if __name__ == "__main__":
-    process_invoices()
+    main()
