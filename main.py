@@ -3,140 +3,151 @@ import pandas as pd
 from dotenv import load_dotenv
 from src.extractor import extract_invoice_data, validate_totals
 
-# --- CONFIGURATION ---
+# --- CONFIGURAÇÃO ---
 load_dotenv()
 
 INPUT_FOLDER = "input"
 OUTPUT_FOLDER = "output"
 PDF_PASSWORD = os.getenv("PDF_PASSWORD")
 
+# --- CONVERSOR UNIVERSAL (A Solução Definitiva) ---
+def universal_converter(val):
+    """
+    Converte qualquer formato numérico (BR ou US) para float.
+    - '220,79'  -> 220.79
+    - '512.0'   -> 512.0
+    - '49,90-'  -> -49.90
+    - '1.200,00'-> 1200.00
+    """
+    if pd.isna(val) or str(val).strip() == "":
+        return 0.0
+
+    # 1. Normalização Básica
+    s = str(val).strip().upper()
+
+    # 2. Detecção de Sinal Negativo (Enel usa no final: "49,78-")
+    sign = -1.0 if '-' in s else 1.0
+    s = s.replace('-', '').replace('R$', '').strip()
+
+    # 3. Decisão de Formato Inteligente
+    if ',' in s:
+        # Se tem vírgula, assumimos formato BR (Decimal = Vírgula)
+        # Ex: "1.200,50" -> Tira ponto, troca vírgula por ponto
+        s = s.replace('.', '').replace(',', '.')
+    else:
+        # Se NÃO tem vírgula, assumimos formato US ou Inteiro Simples
+        # Ex: "512.0" -> Mantém o ponto
+        # Ex: "1200"  -> Mantém
+        pass
+
+    try:
+        return float(s) * sign
+    except ValueError:
+        # Se falhar, retorna 0.0 mas avisa no log se for algo estranho
+        # print(f"⚠️ Falha ao converter: {val}")
+        return 0.0
 
 def process_invoices():
     if not PDF_PASSWORD:
-        print("❌ Error: 'PDF_PASSWORD' not found in .env file.")
+        print("❌ Erro: 'PDF_PASSWORD' não encontrado no .env")
         return
 
     if not os.path.exists(INPUT_FOLDER):
-        print(f"❌ Error: Folder '{INPUT_FOLDER}' not found.")
+        print(f"❌ Erro: Pasta '{INPUT_FOLDER}' não encontrada.")
         return
 
     if not os.path.exists(OUTPUT_FOLDER):
         os.makedirs(OUTPUT_FOLDER)
 
-    files = [f for f in os.listdir(INPUT_FOLDER) if f.lower().endswith(".pdf")]
+    files = [f for f in os.listdir(INPUT_FOLDER) if f.lower().endswith('.pdf')]
 
     if not files:
-        print(f"⚠️  No PDF files found in '{INPUT_FOLDER}'.")
+        print(f"⚠️  Nenhum PDF encontrado em '{INPUT_FOLDER}'.")
         return
 
-    print(f"📂 Found {len(files)} files ready to process.\n")
+    print(f"📂 Encontrados {len(files)} arquivos.\n")
 
     invoices_list = []
     measurements_list = []
 
     for file_name in files:
-        print(f"--- 📄 Processing: {file_name} ---")
+        print(f"--- 📄 Processando: {file_name} ---")
 
         file_path = os.path.join(INPUT_FOLDER, file_name)
         data = extract_invoice_data(file_path, password=PDF_PASSWORD)
 
         if data:
-            ref = data["reference"]
-            client_id = data["client_id"]  # Pegamos o número do cliente
+            ref = data['reference']
+            client_id = data['client_id']
 
-            print(f"   ✅ Reference: {ref}")
-            print(f"   🏠 Client ID: {client_id}")  # Mostra no terminal
+            print(f"   ✅ Referência: {ref}")
+            print(f"   🏠 ID Cliente: {client_id}")
 
-            # --- Process Financial Items ---
-            if data["items"]:
-                print(f"   ⚡ Financial Items: {len(data['items'])}")
-                total_sum = validate_totals(data)
-                print(f"   💰 Calculated Total: R$ {total_sum}")
+            # --- Faturas ---
+            if data['items']:
+                print(f"   ⚡ Itens Financeiros: {len(data['items'])}")
 
-                for item in data["items"]:
-                    item["Nº do Cliente"] = client_id  # Adiciona a nova coluna
-                    item["Arquivo"] = file_name
-                    item["Referência"] = ref
+                # Validação no Terminal (Debug)
+                total_debug = sum([universal_converter(i.get('Valor (R$)', '0')) for i in data['items']])
+                print(f"   💰 Total Validado (Main): R$ {total_debug:.2f}")
+
+                for item in data['items']:
+                    item['Nº do Cliente'] = client_id
+                    item['Arquivo'] = file_name
+                    item['Referência'] = ref
                     invoices_list.append(item)
 
-            # --- Process Measurement ---
-            if data["measurement"]:
-                print(f"   📏 Measurement Items: {len(data['measurement'])}")
-                for item_med in data["measurement"]:
-                    item_med["Nº do Cliente"] = client_id  # Adiciona a nova coluna
-                    item_med["Arquivo"] = file_name
-                    item_med["Referência"] = ref
+            # --- Medição ---
+            if data['measurement']:
+                print(f"   📏 Itens de Medição: {len(data['measurement'])}")
+                for item_med in data['measurement']:
+                    item_med['Nº do Cliente'] = client_id
+                    item_med['Arquivo'] = file_name
+                    item_med['Referência'] = ref
                     measurements_list.append(item_med)
             else:
-                print("   ⚠️  No measurement data found.")
+                print("   ⚠️  Nenhuma medição encontrada.")
 
         print("")
 
-    # --- SAVE REPORTS ---
+    # --- SALVAR PARQUET (Limpo e Convertido) ---
     if invoices_list or measurements_list:
-        excel_path = os.path.join(OUTPUT_FOLDER, "enel_full_report.xlsx")
+        print("💾 Salvando arquivos Parquet...")
 
-        try:
-            with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-                # Aba 1: Fatura
-                if invoices_list:
-                    df_invoice = pd.DataFrame(invoices_list)
-                    # Colocamos "Nº do Cliente" como a PRIMEIRA coluna
-                    cols_inv = [
-                        "Nº do Cliente",
-                        "Arquivo",
-                        "Referência",
-                        "Itens de Fatura",
-                        "Unid.",
-                        "Quant.",
-                        "Preço unit (R$) com tributos",
-                        "Valor (R$)",
-                        "PIS/COFINS",
-                        "Base Calc ICMS (R$)",
-                        "Alíquota ICMS",
-                        "ICMS",
-                        "Tarifa unit (R$)",
-                    ]
+        # 1. FATURAS
+        if invoices_list:
+            df_inv = pd.DataFrame(invoices_list)
 
-                    existing_cols = [c for c in cols_inv if c in df_invoice.columns]
-                    df_invoice = df_invoice[existing_cols]
-                    df_invoice.to_excel(
-                        writer, sheet_name="Invoice Details", index=False
-                    )
+            # Aplica o conversor universal em colunas numéricas
+            cols_num = ['Quant.', 'Preço unit (R$) com tributos', 'Valor (R$)',
+                        'PIS/COFINS', 'Base Calc ICMS (R$)', 'Alíquota ICMS',
+                        'ICMS', 'Tarifa unit (R$)']
 
-                # Aba 2: Medição
-                if measurements_list:
-                    df_measure = pd.DataFrame(measurements_list)
-                    # Colocamos "Nº do Cliente" como a PRIMEIRA coluna
-                    cols_med = [
-                        "Nº do Cliente",
-                        "Arquivo",
-                        "Referência",
-                        "N° Medidor",
-                        "P.Horário/Segmento",
-                        "Data Leitura (Anterior)",
-                        "Leitura (Anterior)",
-                        "Data Leitura (Atual)",
-                        "Leitura (Atual)",
-                        "Fator Multiplicador",
-                        "Consumo kWh",
-                        "N° Dias",
-                    ]
+            for col in cols_num:
+                if col in df_inv.columns:
+                    df_inv[col] = df_inv[col].apply(universal_converter)
 
-                    existing_cols = [c for c in cols_med if c in df_measure.columns]
-                    df_measure = df_measure[existing_cols]
-                    df_measure.to_excel(writer, sheet_name="Measurement", index=False)
+            output_inv = os.path.join(OUTPUT_FOLDER, "faturas.parquet")
+            df_inv.to_parquet(output_inv, index=False)
+            print(f"   ✅ Faturas salvas: {output_inv}")
 
-            print("=" * 60)
-            print(f"📊 Success! Report saved at: {excel_path}")
-            print("=" * 60)
+        # 2. MEDIÇÃO
+        if measurements_list:
+            df_meas = pd.DataFrame(measurements_list)
 
-        except Exception as e:
-            print(f"❌ Error saving Excel: {e}")
+            # Aplica o mesmo conversor (funciona para ponto também!)
+            cols_tec = ['Leitura (Anterior)', 'Leitura (Atual)', 'Fator Multiplicador', 'Consumo kWh']
+            for col in cols_tec:
+                if col in df_meas.columns:
+                    df_meas[col] = df_meas[col].apply(universal_converter)
 
+            output_meas = os.path.join(OUTPUT_FOLDER, "medicao.parquet")
+            df_meas.to_parquet(output_meas, index=False)
+            print(f"   ✅ Medições salvas: {output_meas}")
+
+        print("="*60)
     else:
-        print("🏁 Process finished, but no data was extracted.")
-
+        print("🏁 Nenhum dado extraído.")
 
 if __name__ == "__main__":
     process_invoices()
