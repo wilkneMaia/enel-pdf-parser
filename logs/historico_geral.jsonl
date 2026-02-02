@@ -1,6 +1,0 @@
-{"arquivo": "Enel-09-2025.pdf", "status": "erro_vazio", "detalhe": "Extrator retornou vazio", "timestamp": "2026-02-02T16:45:14.635034"}
-{"arquivo": "Enel-09-2025.pdf", "status": "erro_vazio", "detalhe": "Extrator retornou vazio", "timestamp": "2026-02-02T16:46:01.664206"}
-{"arquivo": "Enel-09-2025.pdf", "status": "erro_vazio", "detalhe": "Extrator retornou vazio", "timestamp": "2026-02-02T17:01:47.522873"}
-{"arquivo": "Enel-09-2025.pdf", "status": "sucesso", "client_id": "52217494", "referencia": "09/2025", "valor_total": 220.78999999999996, "consumo_kwh": 512.0, "injesao_kwh": 397.0, "qtd_itens": 16, "timestamp": "2026-02-02T17:10:24.438853"}
-{"arquivo": "Enel-10-2025.pdf", "status": "sucesso", "client_id": "52217494", "referencia": "10/2025", "valor_total": 572.7099999999999, "consumo_kwh": 509.0, "injesao_kwh": 466.0, "qtd_itens": 13, "timestamp": "2026-02-02T17:24:14.637677"}
-{"arquivo": "Enel-09-2025.pdf", "status": "sucesso", "client_id": "52217494", "referencia": "09/2025", "valor_total": 220.78999999999996, "consumo_kwh": 512.0, "injesao_kwh": 397.0, "qtd_itens": 16, "timestamp": "2026-02-02T17:27:57.195859"}

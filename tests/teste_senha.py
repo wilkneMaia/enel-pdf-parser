@@ -9,7 +9,7 @@ senha = os.getenv("PDF_PASSWORD")
 print(f"🔑 Senha carregada do .env: {senha}")
 
 # 2. Tenta abrir o arquivo problemático
-arquivo = "input/Enel-09-2025.pdf" # Confirme se o arquivo está nesta pasta
+arquivo = "input/Enel-09-2025.pdf"  # Confirme se o arquivo está nesta pasta
 
 if os.path.exists(arquivo):
     try:
