@@ -6,18 +6,19 @@ import re
 
 def clean_line(line):
     """
-    Separates the raw string into: Description | Unit | Values String
+    Tenta separar a linha em: Descrição | Unidade | Valores
     """
-    # 1. Remove Historical Data
+    # 1. Remove Histórico (Estratégia Conservadora)
+    # Remove apenas se tiver espaço antes (ex: " JAN/24") para não quebrar linhas que começam com texto
     history_pattern = (
-        r"\s(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)[\s\/]?\d{2}.*$"
+        r"\s(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)[\s\/]*\d{2,4}.*$"
     )
     cleaned_line = re.sub(history_pattern, "", line, flags=re.IGNORECASE).strip()
 
     if not cleaned_line:
         return None
 
-    # 2. Try to find known units
+    # 2. Tenta encontrar unidades conhecidas (kWh, dias, etc)
     unit_match = re.search(
         r"^(.*?)\s+(kWh|kW|dias|unid|un)\s+(.*)$", cleaned_line, re.IGNORECASE
     )
@@ -29,7 +30,7 @@ def clean_line(line):
             "type": "standard",
         }
 
-    # 3. Simple items
+    # 3. Itens Simples (Descrição + Valor)
     number_match = re.search(r"^(.*?)\s+(\d+[.,]\d{2}.*)$", cleaned_line)
     if number_match:
         return {
@@ -44,7 +45,7 @@ def clean_line(line):
 
 def process_values(values_str, item_type):
     """
-    Maps the string of numbers to the correct columns.
+    Mapeia a string de números para as colunas corretas.
     """
     clean_values = re.sub(
         r"\s(I\s?CMS|LID|DE|FATURAMENTO|TRIBUTOS|COFINS|PIS).*",
@@ -80,6 +81,7 @@ def process_values(values_str, item_type):
             "Tarifa unit (R$)",
         ]
 
+        # Tenta encaixar os tokens nos campos
         if len(tokens) >= 8:
             for i, field in enumerate(fields):
                 columns[field] = tokens[i]
@@ -87,6 +89,7 @@ def process_values(values_str, item_type):
             columns["Quant."] = tokens[0]
             columns["Preço unit (R$) com tributos"] = tokens[1]
             columns["Valor (R$)"] = tokens[2]
+            # Preenche o restante se houver
             for i, val in enumerate(tokens[3:]):
                 if i < len(fields[3:]):
                     columns[fields[3 + i]] = val
@@ -106,22 +109,27 @@ def extract_measurement(full_text):
     lines = full_text.split("\n")
     is_capturing = False
 
+    # Regex ajustado para pegar medição (Consumo)
+    # Procura linha com data (dd/mm/aaaa) e números
     regex_measure = re.compile(
         r"(\S+)\s+(.+?)\s+(\d{2}/\d{2}/\d{4})\s+([\d.]+)\s+(\d{2}/\d{2}/\d{4})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)"
     )
 
     for line in lines:
         line_upper = line.upper().strip()
-        if "EQUIPAMENTOS DE MEDIÇÃO" in line_upper:
+
+        if "EQUIPAMENTOS DE MEDIÇÃO" in line_upper or "DADOS DE MEDIÇÃO" in line_upper:
             is_capturing = True
             continue
-        if is_capturing and (
-            "MÊS/ANO" in line_upper
-            or "HISTÓRICO" in line_upper
-            or "PIS/PASEP" in line_upper
-        ):
-            break
+
         if is_capturing:
+            if (
+                "MÊS/ANO" in line_upper
+                or "HISTÓRICO" in line_upper
+                or "NOTIFICAÇÃO" in line_upper
+            ):
+                break
+
             match = regex_measure.search(line)
             if match:
                 measurement_items.append(
@@ -140,35 +148,6 @@ def extract_measurement(full_text):
     return measurement_items
 
 
-def validate_totals(data):
-    total_calculated = 0.0
-    for item in data["items"]:
-        try:
-            # Pega o valor bruto (ex: "49,78-" ou "150,00")
-            raw_val = item.get("Valor (R$)", "0").strip()
-
-            # Verifica se é negativo (Enel usa o sinal no final: "49,78-")
-            is_negative = raw_val.endswith("-") or raw_val.startswith("-")
-
-            # Limpa a string para ficar no formato float padrão (1000.00)
-            # 1. Remove o sinal de menos e R$
-            clean_val = raw_val.replace("-", "").replace("R$", "").strip()
-            # 2. Remove ponto de milhar e troca vírgula decimal por ponto
-            clean_val = clean_val.replace(".", "").replace(",", ".")
-
-            val_float = float(clean_val)
-
-            # Aplica o sinal negativo se necessário
-            if is_negative:
-                val_float *= -1
-
-            total_calculated += val_float
-        except ValueError:
-            continue
-
-    return round(total_calculated, 2)
-
-
 # --- MAIN EXTRACTION FUNCTION ---
 
 
@@ -179,8 +158,6 @@ def extract_invoice_data(file_path, password=None):
         "items": [],
         "measurement": [],
     }
-
-    print(f"🔍 Analyzing: {file_path}")
 
     IGNORED_TERMS = [
         "MÊS/ANO",
@@ -198,11 +175,20 @@ def extract_invoice_data(file_path, password=None):
         "POSTOS TARIFÁRIOS",
         "ELE-",
         "HFP",
+        "SALDO",
+        "RESERVADO",
     ]
 
     try:
-        with pdfplumber.open(file_path, password=password) as pdf:
+        # Verifica se é path string ou objeto de arquivo (Streamlit)
+        if isinstance(file_path, str):
+            pdf_context = pdfplumber.open(file_path, password=password)
+        else:
+            pdf_context = pdfplumber.open(file_path, password=password)
+
+        with pdf_context as pdf:
             page = pdf.pages[0]
+            # layout=True é essencial para manter a estrutura visual
             text = page.extract_text(layout=True)
 
             # 1. Reference (Mês/Ano)
@@ -210,17 +196,13 @@ def extract_invoice_data(file_path, password=None):
             if ref_match:
                 data["reference"] = ref_match.group(1)
 
-            # 2. Client ID Extraction (ESTRATÉGIA REFORÇADA)
-            # Estratégia A: Procura a frase padrão do rodapé "utilizando o código XXXXX"
-            # Esta é muito mais segura pois é uma frase gramatical, não depende de tabela.
+            # 2. Client ID
             code_match = re.search(
                 r"utilizando\s+o\s+código\s+(\d+)", text, re.IGNORECASE
             )
-
             if code_match:
                 data["client_id"] = code_match.group(1)
             else:
-                # Estratégia B (Fallback): Tenta encontrar pelo posicionamento visual acima da data
                 visual_match = re.search(r"\b(\d{7,12})\s*\n\s*\d{2}/\d{4}", text)
                 if visual_match:
                     data["client_id"] = visual_match.group(1)
@@ -228,7 +210,7 @@ def extract_invoice_data(file_path, password=None):
             # 3. Measurement Data
             data["measurement"] = extract_measurement(text)
 
-            # 4. Financial Items
+            # 4. Financial Items extraction
             lines = text.split("\n")
             is_capturing = False
             temp_items = []
@@ -237,25 +219,35 @@ def extract_invoice_data(file_path, password=None):
                 clean_txt = line.strip()
                 upper_txt = clean_txt.upper()
 
-                if any(term in upper_txt for term in IGNORED_TERMS):
-                    continue
-                if re.match(r"^\d{5,}", clean_txt):
+                if not clean_txt:
                     continue
 
+                # Detecta início da tabela financeira
                 if (
                     "DESCRI" in upper_txt or "ITENS" in upper_txt
                 ) and "FATURA" in upper_txt:
                     is_capturing = True
                     continue
 
+                # Detecta fim da tabela
                 if is_capturing and ("TOTAL" in upper_txt or "SUBTOTAL" in upper_txt):
                     is_capturing = False
                     break
 
                 if is_capturing:
+                    # Filtros de ruído
+                    if any(term in upper_txt for term in IGNORED_TERMS):
+                        continue
+                    if re.match(r"^\d{5,}", clean_txt):
+                        continue  # Números soltos grandes
+
                     info = clean_line(clean_txt)
+
                     if info and info["description"] and len(info["description"]) > 2:
                         desc_upper = info["description"].upper().strip()
+
+                        # --- FILTRO DE LIXO PÓS-EXTRAÇÃO (AQUI É A CORREÇÃO) ---
+                        # Ignora linhas que sejam apenas cabeçalhos fiscais
                         if desc_upper in [
                             "PIS",
                             "COFINS",
@@ -266,6 +258,15 @@ def extract_invoice_data(file_path, password=None):
                         ]:
                             continue
 
+                        # Ignora linhas que sejam HISTÓRICO (Ex: ABR/24 ou ABR 24)
+                        # Isso elimina o erro [ABR24] sem quebrar as outras linhas
+                        if re.match(
+                            r"^(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)[\s\/\-]*\d{2,4}$",
+                            desc_upper,
+                        ):
+                            continue
+                        # -------------------------------------------------------
+
                         value_cols = process_values(info["values_str"], info["type"])
                         item = {
                             "Itens de Fatura": info["description"],
@@ -274,54 +275,13 @@ def extract_invoice_data(file_path, password=None):
                         }
                         temp_items.append(item)
 
-            # 5. Fallback Strategy
-            if not temp_items:
-                keywords = [
-                    "ENERGIA",
-                    "ILUM",
-                    "BANDEIRA",
-                    "JUROS",
-                    "MULTA",
-                    "TUSD",
-                    "TE",
-                ]
-                for line in lines:
-                    clean_txt = line.strip()
-                    upper_txt = clean_txt.upper()
-
-                    if any(term in upper_txt for term in IGNORED_TERMS):
-                        continue
-                    if re.match(r"^\d{5,}", clean_txt):
-                        continue
-                    if "TOTAL" in upper_txt or "VENCIMENTO" in upper_txt:
-                        continue
-
-                    if any(kw in upper_txt for kw in keywords) and re.search(
-                        r"\d+[.,]\d{2}", line
-                    ):
-                        info = clean_line(clean_txt)
-                        if (
-                            info
-                            and info["description"]
-                            and len(info["description"]) > 2
-                        ):
-                            desc_upper = info["description"].upper().strip()
-                            if desc_upper in ["PIS", "COFINS", "ICMS", "I CMS"]:
-                                continue
-
-                            value_cols = process_values(
-                                info["values_str"], info["type"]
-                            )
-                            item = {
-                                "Itens de Fatura": info["description"],
-                                "Unid.": info["unit"],
-                                **value_cols,
-                            }
-                            temp_items.append(item)
-
             data["items"] = temp_items
             return data
 
     except Exception as e:
-        print(f"❌ Critical Error: {e}")
+        # Se for erro de senha, avisa diferente
+        if "Password" in str(e):
+            print(f"❌ Erro de Senha: {e}")
+        else:
+            print(f"❌ Erro Crítico: {e}")
         return None
