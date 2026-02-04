@@ -10,13 +10,14 @@ from src.database.manager import load_data
 try:
     from pandasai import SmartDataframe
     from pandasai.llm import LLM
-    from google import genai
-
     PANDASAI_AVAILABLE = True
     import_error = None
 except Exception as e:
     PANDASAI_AVAILABLE = False
     import_error = e
+
+# Importa o wrapper LLM (fornece support multi-provedor)
+from src.services.llm_client import available_providers, list_models, create_adapter, ProviderUnavailable
 
 st.set_page_config(page_title="Assistente IA", page_icon="🤖", layout="wide")
 
@@ -44,27 +45,9 @@ if df_faturas.empty:
     st.stop()
 
 # 2. Configuração da API Key
-with st.expander(
-    "⚙️ Configuração da IA (Google Gemini)",
-    expanded=not st.session_state.get("api_key_configured", False),
-):
-    st.info(
-        "Para usar este recurso, você precisa de uma API Key do Google Gemini (gratuita)."
-    )
-    api_key_input = st.text_input(
-        "Insira sua Google API Key:",
-        type="password",
-        help="Obtenha em: https://aistudio.google.com/",
-    )
-
-    if api_key_input:
-        st.session_state["gemini_api_key"] = api_key_input
-        st.session_state["api_key_configured"] = True
-        st.success("API Key configurada! Pode fechar esta aba.")
-
-if "gemini_api_key" not in st.session_state:
-    st.warning("🔒 Aguardando API Key para iniciar o cérebro da IA...")
-    st.stop()
+# Nota: a configuração multi-provedor (Google/OpenAI/Anthropic) foi movida mais abaixo para suportar
+# múltiplos backends. A UI colocada lá pede a chave para o provedor selecionado e realiza a listagem
+# de modelos dinamicamente.
 
 # 3. Preparação do DataFrame
 # Selecionamos colunas chave para otimizar o contexto da IA
@@ -108,146 +91,132 @@ df_ia["Ano"] = df_ia["Referência"].apply(extrair_ano)
 # 4. Instância do PandasAI
 
 
-# Adapter customizado para usar google-genai (novo SDK) com PandasAI
-class GoogleGenaiAdapter(LLM):
-    def __init__(self, api_key: str, model: str = "gemini-1.5-flash"):
-        self.api_key = api_key
-        self.model = model
-        self.client = genai.Client(api_key=api_key)
+# Multi-provider LLM configuration using src.services.llm_client
+from src.services.llm_client import available_providers, list_models, create_adapter, ProviderUnavailable
 
-    @property
-    def type(self) -> str:
-        return "google-genai"
+# UI: seleção de provedor e configuração de API Keys
+# Sempre oferecemos as opções principais; marcamos quais SDKs estão instalados no ambiente.
+all_providers = ["google", "openai", "anthropic"]
+installed = set(available_providers())
+providers = all_providers
 
-    def call(self, instruction, value, suffix="") -> str:
-        # Instrução de segurança para restringir o escopo da IA
-        safety_prompt = (
-            "\n\n[SYSTEM INSTRUCTION]\n"
-            "You are an assistant specialized in energy bill analysis (Enel PDF Parser). "
-            "The dataset has been enriched with columns 'Categoria' and 'Ano' to help you.\n"
-            "1. USE 'Categoria' column for filtering items. Categories are: 'Iluminação Pública', 'Bandeiras Tarifárias', 'Multas e Juros', 'Impostos', 'Energia e Outros'.\n"
-            "   Example: If asked about 'Iluminação Pública', filter `df[df['Categoria'] == 'Iluminação Pública']`.\n"
-            "2. USE 'Ano' column for filtering by year (it contains strings like '2024', '2025').\n"
-            "You MUST ONLY answer questions related to the provided data (consumption, costs, dates, taxes) or the system. "
-            "If the user asks about unrelated topics (general knowledge, sports, jokes, politics), DO NOT generate code. "
-            "Instead, reply directly in Portuguese: 'Desculpe, só posso responder perguntas sobre seus dados de energia.'"
-        )
-        prompt = f"{instruction}\n{safety_prompt}\n{value}\n{suffix}"
-        response = self.client.models.generate_content(
-            model=self.model, contents=prompt
-        )
-        return response.text
+with st.expander(
+    "⚙️ Configuração da IA (Provedor de LLM)", expanded=not st.session_state.get("api_key_configured_any", False)
+):
+    st.info("Escolha o provedor de IA e insira a API Key correspondente.")
+    # Mostra todas as opções, indicando se o SDK está presente
+    provider_labels = [f"{p} {'(instalado)' if p in installed else '(SDK não instalado)'}" for p in providers]
+    sel_index = 0
+    provider_choice = st.selectbox("Selecione um provedor de IA:", provider_labels, index=sel_index, key="llm_provider")
+    provider = providers[provider_labels.index(provider_choice)]
 
+    api_key_label = {
+        "google": "Google Gemini API Key",
+        "openai": "OpenAI API Key",
+        "anthropic": "Anthropic API Key (Claude)",
+    }.get(provider, "API Key")
 
-# Função para listar modelos Gemini (compatível com variações do SDK)
-def fetch_gemini_models():
-    try:
-        client = genai.Client(api_key=st.session_state["gemini_api_key"])
-        resp = list(client.models.list())
-        model_names = [m.name for m in resp]
-        return [m for m in model_names if "gemini" in m.lower()], str(resp), None
-    except Exception as e:
-        return [], None, f"Erro ao listar modelos: {str(e)}"
-
-
-# Inicializa cache de modelos em sessão (faz a primeira carga automática)
-if "gemini_models" not in st.session_state:
-    models, raw, err = fetch_gemini_models()
-    st.session_state["gemini_models"] = models
-    st.session_state["gemini_models_raw"] = repr(raw)
-    st.session_state["gemini_models_last_error"] = err
-
-
-# Helper para (re)instanciar GoogleGemini com um modelo específico
-def rebuild_llm_with_model(model_name: str):
-    return GoogleGenaiAdapter(
-        api_key=st.session_state["gemini_api_key"], model=model_name
+    api_key_input = st.text_input(
+        f"Insira sua {api_key_label}:", type="password", key=f"llm_api_key_input_{provider}",
+        help="Armazene sua chave com cuidado. Você também pode configurar via variáveis ambiente."
     )
 
+    if api_key_input:
+        st.session_state[f"llm_api_key_{provider}"] = api_key_input
+        st.session_state["api_key_configured_any"] = True
+        st.success("API Key configurada para provedor selecionado! Você pode fechar esta aba.")
 
-# UI: seleção e recarga de modelos
-col_models1, col_models2 = st.columns([3, 1])
-with col_models1:
-    if st.session_state.get("gemini_models"):
-        selected_model = st.selectbox(
-            "Selecione um modelo Gemini:",
-            st.session_state["gemini_models"],
-            index=0,
-            key="gemini_model",
-        )
-    else:
-        st.warning(
-            "Nenhum modelo Gemini listado — você pode informar um modelo manualmente ou recarregar."
-        )
-        selected_model = st.text_input(
-            "Informe modelo manualmente (ex: gemini-1.5-flash):",
-            value="gemini-1.5-flash",
-            key="gemini_manual_model",
-        )
+    if f"llm_api_key_{provider}" not in st.session_state:
+        st.warning("🔒 Aguardando API Key para iniciar o LLM selecionado...")
+        if provider not in installed:
+            st.info("Observação: o SDK para este provedor não está instalado no ambiente. Você ainda pode inserir a API Key e usar a opção manual de modelo, mas algumas funcionalidades (ex: listagem automática de modelos) podem não funcionar até instalar o SDK correspondente.")
+        st.stop()
 
-with col_models2:
-    if st.button("🔄 Recarregar modelos"):
-        models, raw, err = fetch_gemini_models()
-        st.session_state["gemini_models"] = models
-        st.session_state["gemini_models_raw"] = repr(raw)
-        st.session_state["gemini_models_last_error"] = err
-        st.experimental_rerun()
+    models_key = f"llm_{provider}_models"
+    if models_key not in st.session_state:
+        models, err = list_models(provider, st.session_state[f"llm_api_key_{provider}"])
+        st.session_state[models_key] = models
+        st.session_state[f"{models_key}_raw"] = repr(models)
+        st.session_state[f"{models_key}_last_error"] = err
 
-    if st.button("🧪 Testar conexão"):
-        models, raw, err = fetch_gemini_models()
-        st.session_state["gemini_models"] = models
-        st.session_state["gemini_models_raw"] = repr(raw)
-        st.session_state["gemini_models_last_error"] = err
-        if err:
-            st.error(f"Teste falhou: {err}")
-        else:
-            count = len(models)
-            st.success(f"Conexão OK — {count} modelo(s) Gemini encontrados.")
-            if models:
-                st.info(f"Exemplo: {models[0]}")
-        # Grava resposta bruta em logs para auditoria
-        try:
-            os.makedirs("logs", exist_ok=True)
-            fname = os.path.join(
-                "logs",
-                f"gemini_models_response_{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.log",
+    col_models1, col_models2 = st.columns([3, 1])
+    with col_models1:
+        if st.session_state.get(models_key):
+            selected_model = st.selectbox(
+                f"Selecione um modelo ({provider}):",
+                st.session_state[models_key],
+                index=0,
+                key=f"{provider}_model_select",
             )
-            with open(fname, "w", encoding="utf-8") as fh:
-                json.dump(
-                    {"models": models, "raw": repr(raw), "error": err},
-                    fh,
-                    ensure_ascii=False,
-                    indent=2,
+        else:
+            st.warning(
+                f"Nenhum modelo listado para {provider} — informe um modelo manualmente ou recarregue."
+            )
+            selected_model = st.text_input(
+                f"Informe modelo manualmente (ex: gemini-1.5-flash):",
+                value="",
+                key=f"{provider}_manual_model",
+            )
+
+    with col_models2:
+        if st.button("🔄 Recarregar modelos"):
+            models, err = list_models(provider, st.session_state[f"llm_api_key_{provider}"])
+            st.session_state[models_key] = models
+            st.session_state[f"{models_key}_raw"] = repr(models)
+            st.session_state[f"{models_key}_last_error"] = err
+            st.experimental_rerun()
+
+        if st.button("🧪 Testar conexão"):
+            models, err = list_models(provider, st.session_state[f"llm_api_key_{provider}"])
+            st.session_state[models_key] = models
+            st.session_state[f"{models_key}_raw"] = repr(models)
+            st.session_state[f"{models_key}_last_error"] = err
+            if err:
+                st.error(f"Teste falhou: {err}")
+            else:
+                count = len(models)
+                st.success(f"Conexão OK — {count} modelo(s) encontrados para {provider}.")
+                if models:
+                    st.info(f"Exemplo: {models[0]}")
+            # Grava resposta bruta em logs para auditoria
+            try:
+                os.makedirs("logs", exist_ok=True)
+                fname = os.path.join(
+                    "logs",
+                    f"{provider}_models_response_{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.log",
                 )
-            st.info(f"Resposta bruta salva em: {fname}")
-        except Exception as e:
-            st.warning(f"Não foi possível salvar log: {e}")
+                with open(fname, "w", encoding="utf-8") as fh:
+                    json.dump({"models": models, "error": err}, fh, ensure_ascii=False, indent=2)
+                st.info(f"Resposta bruta salva em: {fname}")
+            except Exception as e:
+                st.warning(f"Não foi possível salvar log: {e}")
 
-# Instancia o LLM com o modelo selecionado (CRUCIAL: passar o modelo no construtor)
-llm = GoogleGenaiAdapter(
-    api_key=st.session_state["gemini_api_key"], model=selected_model
-)
+# Helper para (re)instanciar adapter LLM com modelo específico
 
+def rebuild_llm_with_model(provider_name: str, model_name: str):
+    try:
+        api_key = st.session_state.get(f"llm_api_key_{provider_name}")
+        if not api_key:
+            raise ProviderUnavailable("API key não configurada para o provedor selecionado")
+        return create_adapter(provider_name, api_key, model_name)
+    except ProviderUnavailable as e:
+        st.error(f"Erro ao construir LLM adapter: {e}")
+        return None
+    except Exception as e:
+        st.error(f"Erro inesperado ao construir LLM adapter: {e}")
+        return None
 
-# Retorna o modelo efetivo usado nas chamadas (prefixa com 'models/' quando necessário)
-def get_effective_model():
-    m = (
-        st.session_state.get("gemini_model")
-        or st.session_state.get("gemini_manual_model")
-        or selected_model
-        or "gemini-1.5-flash"
-    )
-    if m and not str(m).startswith("models/"):
-        return f"models/{m}"
-    return m
+# Instancia o LLM com o modelo selecionado
+llm = rebuild_llm_with_model(provider, selected_model)
 
+# Debug info para exibir no expander
 
 with st.expander("🔧 Debug: listagem de modelos (mostrar/ocultar)"):
-    st.write("Modelos encontrados:", st.session_state.get("gemini_models"))
+    st.write("Provedor selecionado:", provider)
+    st.write("Modelos encontrados:", st.session_state.get(f"llm_{provider}_models"))
     st.write("Modelo Selecionado para Uso:", selected_model)
-    st.write("Modelo efetivo (para SDK):", get_effective_model())
-    st.write("Erro:", st.session_state.get("gemini_models_last_error"))
-    st.write("Resposta bruta:", st.session_state.get("gemini_models_raw"))
+    st.write("Erro:", st.session_state.get(f"llm_{provider}_models_last_error"))
+    st.write("Resposta bruta:", st.session_state.get(f"llm_{provider}_models_raw"))
 
 # Dicionário de metadados para ajudar a IA a entender o contexto das colunas
 field_descriptions = {
@@ -331,23 +300,27 @@ if prompt := st.chat_input("💬 Pergunte aos seus dados (Ex: Qual a média de g
 
                 elif "404" in err_str or "not found" in err_str.lower():
                     st.warning("Modelo indisponível. Tentando alternativo...")
-                    models, _, _ = fetch_gemini_models()
+                    api_key = st.session_state.get(f"llm_api_key_{provider}")
+                    models, err = list_models(provider, api_key)
                     if models:
                         new_model = models[0]
-                        st.session_state["gemini_model"] = new_model
-                        new_llm = rebuild_llm_with_model(new_model)
-                        new_sdf = SmartDataframe(
-                            df_ia,
-                            config={
-                                "llm": new_llm,
-                                "verbose": True,
-                                "custom_whitelisted_dependencies": ["locale"],
-                            },
-                        )
-                        try:
-                            response = new_sdf.chat(prompt)
-                        except Exception as e2:
-                            st.error(f"Falha no reenvio: {e2}")
+                        st.session_state[f"llm_{provider}_selected_model"] = new_model
+                        new_llm = rebuild_llm_with_model(provider, new_model)
+                        if new_llm is not None:
+                            new_sdf = SmartDataframe(
+                                df_ia,
+                                config={
+                                    "llm": new_llm,
+                                    "verbose": True,
+                                    "custom_whitelisted_dependencies": ["locale"],
+                                },
+                            )
+                            try:
+                                response = new_sdf.chat(prompt)
+                            except Exception as e2:
+                                st.error(f"Falha no reenvio: {e2}")
+                        else:
+                            st.error("Não foi possível instanciar o adapter para o novo modelo.")
                     else:
                         st.error(f"Erro: {e}")
                 else:
