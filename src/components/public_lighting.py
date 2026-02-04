@@ -55,7 +55,7 @@ def render_public_lighting(df_fin_view, df_med_view):
             )
             st.dataframe(
                 df_lei_display[["Faixa", "Alíquota (%)"]],
-                width='stretch',
+                width="stretch",
                 hide_index=True,
             )
         else:
@@ -216,7 +216,9 @@ def render_public_lighting(df_fin_view, df_med_view):
             delta_color=cor_destaque,
         )
     else:
-        st.success("✅ **Tudo Certo!**\n\nTodas as faturas seguiram a alíquota da Lei Municipal.")
+        st.success(
+            "✅ **Tudo Certo!**\n\nTodas as faturas seguiram a alíquota da Lei Municipal."
+        )
 
     # st.divider()
 
@@ -256,7 +258,7 @@ def render_public_lighting(df_fin_view, df_med_view):
             height=400,
             legend=dict(orientation="h", y=1.1),
         )
-        st.plotly_chart(fig_aliq, width='stretch')
+        st.plotly_chart(fig_aliq, width="stretch")
 
     with c_table:
         if not divergencias.empty:
@@ -270,14 +272,16 @@ def render_public_lighting(df_fin_view, df_med_view):
 
             # Ordenação
             try:
-                out_df["_dt"] = pd.to_datetime(out_df["Referência"], format="%b/%Y", errors="coerce")
+                out_df["_dt"] = pd.to_datetime(
+                    out_df["Referência"], format="%b/%Y", errors="coerce"
+                )
                 out_df = out_df.sort_values("_dt")
             except:
                 pass
 
             st.dataframe(
                 out_df[["Referência", "Consumo", "Lei", "Real", "Diff"]],
-                width='stretch',
+                width="stretch",
                 hide_index=True,
                 height=400,  # Altura sincronizada com o gráfico
             )
@@ -306,7 +310,7 @@ def render_public_lighting(df_fin_view, df_med_view):
             color_discrete_map={"R$ Pago": "#EF553B", "R$ Lei": "#00CC96"},
             height=350,
         )
-        st.plotly_chart(fig, width='stretch')
+        st.plotly_chart(fig, width="stretch")
 
     with col2:
         st.write("### 📋 Detalhamento")
@@ -338,5 +342,5 @@ def render_public_lighting(df_fin_view, df_med_view):
                 "Desvio": st.column_config.NumberColumn("Diff", format="%.2f"),
             },
             hide_index=True,
-            width='stretch',
+            width="stretch",
         )

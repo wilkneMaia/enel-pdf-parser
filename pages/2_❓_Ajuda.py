@@ -21,7 +21,9 @@ with col_step1:
     st.markdown(
         "Acesse o site ou aplicativo da Enel e baixe a **fatura digital em PDF**."
     )
-    st.info("💡 **Dica:** O sistema funciona melhor com o PDF original, não com fotos ou escaneamentos.")
+    st.info(
+        "💡 **Dica:** O sistema funciona melhor com o PDF original, não com fotos ou escaneamentos."
+    )
 
 with col_step2:
     st.subheader("2. Importe no Sistema")

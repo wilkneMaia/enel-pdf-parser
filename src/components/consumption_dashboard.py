@@ -178,7 +178,7 @@ def render_consumption_dashboard(df_medicao, df_faturas):
         fig_bar.update_layout(
             legend_title=None, xaxis_title=None, legend=dict(orientation="h", y=1.1)
         )
-        st.plotly_chart(fig_bar, width='stretch')
+        st.plotly_chart(fig_bar, width="stretch")
 
     with c2:
         st.markdown("### 💸 Eficiência (R$ por kWh)")
@@ -193,7 +193,7 @@ def render_consumption_dashboard(df_medicao, df_faturas):
             line_shape="spline",
         )
         fig_line.update_traces(line_color="#EF553B", line_width=3)
-        st.plotly_chart(fig_line, width='stretch')
+        st.plotly_chart(fig_line, width="stretch")
 
     # --- 5. INSIGHTS INTELIGENTES (NOVO) ---
     st.markdown("### 🧠 Insights do Período")

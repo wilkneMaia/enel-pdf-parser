@@ -180,7 +180,7 @@ def render_taxometer(df_fin_view, total_custo):
             fig_tree.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
             # Melhora o texto dentro dos quadrados
             fig_tree.update_traces(textinfo="label+value+percent entry")
-            st.plotly_chart(fig_tree, width='stretch')
+            st.plotly_chart(fig_tree, width="stretch")
         else:
             st.info("Sem dados suficientes para gerar o mapa.")
 
@@ -218,12 +218,12 @@ def render_taxometer(df_fin_view, total_custo):
                 showlegend=False,
             )
             fig_bar.update_traces(textposition="outside", cliponaxis=False)
-            st.plotly_chart(fig_bar, width='stretch')
+            st.plotly_chart(fig_bar, width="stretch")
         else:
             st.success("Sua conta não possui impostos ou taxas extras identificáveis.")
 
     with st.expander("Ver Dados em Tabela"):
         st.dataframe(
             df_treemap.sort_values("Valor (R$)", ascending=False),
-            width='stretch',
+            width="stretch",
         )

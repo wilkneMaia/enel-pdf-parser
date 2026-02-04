@@ -106,12 +106,12 @@ if uploaded_file is not None:
         st.info(f"✅ Fatura identificada: **{data['ref']}**")
 
         st.markdown("### 📝 Conferência dos Dados")
-        st.dataframe(data["fin"], width='stretch', hide_index=True)
+        st.dataframe(data["fin"], width="stretch", hide_index=True)
 
         c_save, c_cancel = st.columns([1, 1])
 
         with c_save:
-            if st.button("💾 Confirmar e Salvar", type="primary", width='stretch'):
+            if st.button("💾 Confirmar e Salvar", type="primary", width="stretch"):
                 if save_data(data["fin"], data["med"]):
                     st.success(f"Fatura **{data['ref']}** salva com sucesso!")
 
@@ -124,7 +124,7 @@ if uploaded_file is not None:
                     st.error("Erro ao escrever no banco de dados.")
 
         with c_cancel:
-            if st.button("❌ Cancelar", width='stretch'):
+            if st.button("❌ Cancelar", width="stretch"):
                 st.session_state["preview_data"] = None
                 st.session_state["uploader_key"] += 1
                 st.rerun()
@@ -185,7 +185,7 @@ if not df_faturas.empty:
             "Consumo kWh": st.column_config.NumberColumn("Consumo", format="%d kWh"),
             "Qtd. Itens": st.column_config.NumberColumn("Itens Extraídos"),
         },
-        width='stretch',
+        width="stretch",
         hide_index=True,
     )
 

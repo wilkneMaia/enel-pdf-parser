@@ -89,7 +89,7 @@ def render_financial_flow(df_fin_view):
         fig_pie.update_layout(
             showlegend=False, margin=dict(t=0, b=0, l=0, r=0), height=300
         )
-        st.plotly_chart(fig_pie, width='stretch')
+        st.plotly_chart(fig_pie, width="stretch")
 
     # 3. Gráfico de Barras Horizontais (Ranking)
     with col_ranking:
@@ -147,7 +147,7 @@ def render_financial_flow(df_fin_view):
         fig_rank.update_xaxes(
             visible=False
         )  # Remove eixo X (números em baixo) para limpar
-        st.plotly_chart(fig_rank, width='stretch')
+        st.plotly_chart(fig_rank, width="stretch")
 
     # --- 4. Gráfico de Evolução (MOVIDO PARA CÁ) ---
     st.divider()
@@ -168,12 +168,18 @@ def render_financial_flow(df_fin_view):
     if not df_evolucao.empty:
         # Identifica meses com Bandeira Vermelha nos itens originais
         meses_vermelhos = df_fin_view[
-            df_fin_view["Itens de Fatura"].astype(str).str.contains("VERMELHA", case=False, na=False)
+            df_fin_view["Itens de Fatura"]
+            .astype(str)
+            .str.contains("VERMELHA", case=False, na=False)
         ]["Referência"].unique()
 
         # Cria a linha de evolução padrão
         fig_evolucao = px.line(
-            df_evolucao, x="Referência", y="Valor (R$)", markers=True, line_shape="spline"
+            df_evolucao,
+            x="Referência",
+            y="Valor (R$)",
+            markers=True,
+            line_shape="spline",
         )
         fig_evolucao.update_traces(line_color="#00CC96", line_width=3)
 
@@ -187,13 +193,16 @@ def render_financial_flow(df_fin_view):
                 marker=dict(color="#EF553B", size=12, symbol="diamond"),
                 name="Bandeira Vermelha",
                 hovertext="⚠️ Cobrança de Bandeira Vermelha Detectada!",
-                hoverinfo="text+y"
+                hoverinfo="text+y",
             )
 
         fig_evolucao.update_layout(
-            xaxis_title=None, yaxis_title="Valor (R$)", margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", y=1.1)
+            xaxis_title=None,
+            yaxis_title="Valor (R$)",
+            margin=dict(l=0, r=0, t=10, b=0),
+            legend=dict(orientation="h", y=1.1),
         )
-        st.plotly_chart(fig_evolucao, width='stretch')
+        st.plotly_chart(fig_evolucao, width="stretch")
 
         # --- 5. INSIGHTS AUTOMÁTICOS (NOVO) ---
         st.markdown("#### 🧠 Análise de Tendência")
@@ -208,8 +217,14 @@ def render_financial_flow(df_fin_view):
         diff_media = ultimo_val - media_mensal
 
         col_i1.metric("Média Mensal", f"R$ {media_mensal:,.2f}")
-        col_i2.metric("Pico de Gasto", f"R$ {max_val:,.2f}", f"{mes_max}", delta_color="inverse")
+        col_i2.metric(
+            "Pico de Gasto", f"R$ {max_val:,.2f}", f"{mes_max}", delta_color="inverse"
+        )
 
         status_media = "Acima da Média" if diff_media > 0 else "Abaixo da Média"
-        col_i3.metric(f"Última Fatura ({df_evolucao.iloc[-1]['Referência']})", f"R$ {ultimo_val:,.2f}",
-                      f"{status_media} (R$ {diff_media:,.2f})", delta_color="inverse")
+        col_i3.metric(
+            f"Última Fatura ({df_evolucao.iloc[-1]['Referência']})",
+            f"R$ {ultimo_val:,.2f}",
+            f"{status_media} (R$ {diff_media:,.2f})",
+            delta_color="inverse",
+        )

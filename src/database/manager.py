@@ -89,9 +89,7 @@ def save_data(df_financeiro, df_medicao):
         keys_fin.append("Nº do Cliente")
 
     if not df_financeiro.empty:
-        success_fin = _upsert_dataframe(
-            df_financeiro, FILE_FATURAS, keys=keys_fin
-        )
+        success_fin = _upsert_dataframe(df_financeiro, FILE_FATURAS, keys=keys_fin)
 
     # Salva Medição
     keys_med = ["Referência"]
