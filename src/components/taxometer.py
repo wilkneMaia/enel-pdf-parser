@@ -247,3 +247,30 @@ def render_taxometer(df_fin_view):
             )
         else:
             st.info("Sem dados para exibir.")
+
+    # --- E. INSIGHTS AUTOMÁTICOS ---
+    st.markdown("### 🧠 Insights Tributários")
+    c_i1, c_i2 = st.columns(2)
+
+    with c_i1:
+        # Insight de Proporção (Didático)
+        st.info(
+            f"💡 **Para onde vai seu dinheiro?**\n\n"
+            f"Para cada **R$ 100,00** pagos nesta fatura, aproximadamente **R$ {pct_tributos:.2f}** "
+            f"são impostos e taxas. Apenas **R$ {100 - pct_tributos:.2f}** pagam efetivamente a energia consumida."
+        )
+
+    with c_i2:
+        # Insight de Bandeiras (Alerta)
+        if total_extras > 0:
+            st.warning(
+                f"⚠️ **Impacto das Bandeiras:**\n\n"
+                f"As bandeiras tarifárias (Vermelha/Amarela/Escassez) encareceram sua conta em "
+                f"**R$ {total_extras:,.2f}** neste período. Isso representa custos de geração extra no país."
+            )
+        else:
+            st.success(
+                "✅ **Bandeira Verde:**\n\n"
+                "Não foram detectadas cobranças extras de bandeiras tarifárias neste período. "
+                "Você pagou a tarifa base de energia."
+            )

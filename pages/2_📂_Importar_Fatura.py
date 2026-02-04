@@ -142,25 +142,7 @@ if not df_faturas.empty:
     k2.metric("Última Referência", ultimo_mes)
     k3.metric("Total Acumulado (R$)", f"R$ {total_gasto:,.2f}")
 
-    # 3. Gráfico de Evolução do Valor Total
-    st.markdown("### 📈 Evolução do Valor da Conta")
-    df_agrupado = df_faturas.groupby("Referência")["Valor (R$)"].sum().reset_index()
-
-    try:
-        df_agrupado["Data_Ordenacao"] = pd.to_datetime(
-            df_agrupado["Referência"], format="%b/%Y", errors="coerce"
-        )
-        df_agrupado = df_agrupado.sort_values("Data_Ordenacao")
-    except:
-        pass
-
-    fig_evolucao = px.line(
-        df_agrupado, x="Referência", y="Valor (R$)", markers=True, line_shape="spline"
-    )
-    fig_evolucao.update_traces(line_color="#00CC96", line_width=3)
-    st.plotly_chart(fig_evolucao, use_container_width=True)
-
-    # 4. Tabela de Detalhes
+    # 3. Tabela de Detalhes
     st.markdown("### 📋 Faturas Cadastradas")
     df_resumo_mes = (
         df_faturas.groupby("Referência")
@@ -203,10 +185,6 @@ if not df_faturas.empty:
                 os.remove("data/database/faturas.parquet")
             if os.path.exists("data/database/medicao.parquet"):
                 os.remove("data/database/medicao.parquet")
-            st.success("Banco de dados limpo! Recarregue a página.")
+            st.success("Banco de dados limpo com sucesso!")
             time.sleep(1)
             st.rerun()
-else:
-    st.info(
-        "📭 O banco de dados está vazio. Importe sua primeira fatura acima para ver o histórico."
-    )

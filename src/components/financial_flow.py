@@ -148,3 +148,68 @@ def render_financial_flow(df_fin_view):
             visible=False
         )  # Remove eixo X (números em baixo) para limpar
         st.plotly_chart(fig_rank, use_container_width=True)
+
+    # --- 4. Gráfico de Evolução (MOVIDO PARA CÁ) ---
+    st.divider()
+    st.markdown("### 📈 Evolução do Valor da Conta")
+
+    # Agrupa por mês para a linha principal
+    df_evolucao = df_fin_view.groupby("Referência")["Valor (R$)"].sum().reset_index()
+
+    # Ordenação Cronológica
+    try:
+        df_evolucao["Data_Ordenacao"] = pd.to_datetime(
+            df_evolucao["Referência"], format="%b/%Y", errors="coerce"
+        )
+        df_evolucao = df_evolucao.sort_values("Data_Ordenacao")
+    except Exception:
+        pass
+
+    if not df_evolucao.empty:
+        # Identifica meses com Bandeira Vermelha nos itens originais
+        meses_vermelhos = df_fin_view[
+            df_fin_view["Itens de Fatura"].astype(str).str.contains("VERMELHA", case=False, na=False)
+        ]["Referência"].unique()
+
+        # Cria a linha de evolução padrão
+        fig_evolucao = px.line(
+            df_evolucao, x="Referência", y="Valor (R$)", markers=True, line_shape="spline"
+        )
+        fig_evolucao.update_traces(line_color="#00CC96", line_width=3)
+
+        # Adiciona destaque (Pontos Vermelhos) onde houve Bandeira Vermelha
+        df_red = df_evolucao[df_evolucao["Referência"].isin(meses_vermelhos)]
+        if not df_red.empty:
+            fig_evolucao.add_scatter(
+                x=df_red["Referência"],
+                y=df_red["Valor (R$)"],
+                mode="markers",
+                marker=dict(color="#EF553B", size=12, symbol="diamond"),
+                name="Bandeira Vermelha",
+                hovertext="⚠️ Cobrança de Bandeira Vermelha Detectada!",
+                hoverinfo="text+y"
+            )
+
+        fig_evolucao.update_layout(
+            xaxis_title=None, yaxis_title="Valor (R$)", margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", y=1.1)
+        )
+        st.plotly_chart(fig_evolucao, use_container_width=True)
+
+        # --- 5. INSIGHTS AUTOMÁTICOS (NOVO) ---
+        st.markdown("#### 🧠 Análise de Tendência")
+        col_i1, col_i2, col_i3 = st.columns(3)
+
+        media_mensal = df_evolucao["Valor (R$)"].mean()
+        max_val = df_evolucao["Valor (R$)"].max()
+        mes_max = df_evolucao.loc[df_evolucao["Valor (R$)"].idxmax(), "Referência"]
+
+        # Comparação último mês vs média
+        ultimo_val = df_evolucao.iloc[-1]["Valor (R$)"]
+        diff_media = ultimo_val - media_mensal
+
+        col_i1.metric("Média Mensal", f"R$ {media_mensal:,.2f}")
+        col_i2.metric("Pico de Gasto", f"R$ {max_val:,.2f}", f"{mes_max}", delta_color="inverse")
+
+        status_media = "Acima da Média" if diff_media > 0 else "Abaixo da Média"
+        col_i3.metric(f"Última Fatura ({df_evolucao.iloc[-1]['Referência']})", f"R$ {ultimo_val:,.2f}",
+                      f"{status_media} (R$ {diff_media:,.2f})", delta_color="inverse")
