@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+
 def render_financial_flow(df_fin_view):
     """
     Renderiza a seção de Fluxo Financeiro com visual CLEAN.
@@ -26,7 +27,9 @@ def render_financial_flow(df_fin_view):
     # 2. Define Tipo (Despesa vs Economia) e Cores
     # Valores positivos são Cobranças (Despesa) -> Vermelho
     # Valores negativos são Devoluções/Créditos (Economia) -> Verde
-    df_fat["Tipo"] = df_fat["Valor (R$)"].apply(lambda x: "Despesa" if x > 0 else "Economia")
+    df_fat["Tipo"] = df_fat["Valor (R$)"].apply(
+        lambda x: "Despesa" if x > 0 else "Economia"
+    )
 
     # Mapeamento de Cores
     color_map = {"Despesa": "#EF553B", "Economia": "#00CC96"}
@@ -43,8 +46,19 @@ def render_financial_flow(df_fin_view):
 
     # 1. Cartões de Resumo (KPIs)
     k1, k2, k3 = st.columns(3)
-    k1.metric("Total de Despesas", f"R$ {total_despesas:,.2f}", delta="-Saídas", delta_color="inverse")
-    k2.metric("Total de Economia/Créditos", f"R$ {total_economia:,.2f}", delta="+Entradas", delta_color="normal")
+    k1.metric(
+        "Total de Despesas",
+        f"R$ {total_despesas:,.2f}",
+        delta="-Saídas",
+        delta_color="inverse",
+    )
+    k2.metric(
+        "Total de Economia/Créditos",
+        f"R$ {total_economia:,.2f}",
+        delta="+Entradas",
+        delta_color="normal",
+        help="Soma de todos os itens negativos da fatura (ex: Crédito de Energia Injetada, Devoluções, Descontos).",
+    )
     k3.metric("Saldo Final (A Pagar)", f"R$ {saldo_final:,.2f}")
 
     st.divider()
@@ -56,10 +70,12 @@ def render_financial_flow(df_fin_view):
         st.caption("🍩 Proporção: Onde foi o dinheiro?")
 
         # Cria um mini dataframe para o gráfico de pizza
-        df_pie = pd.DataFrame([
-            {"Tipo": "Despesa", "Valor": total_despesas},
-            {"Tipo": "Economia", "Valor": total_economia}
-        ])
+        df_pie = pd.DataFrame(
+            [
+                {"Tipo": "Despesa", "Valor": total_despesas},
+                {"Tipo": "Economia", "Valor": total_economia},
+            ]
+        )
 
         fig_pie = px.pie(
             df_pie,
@@ -67,10 +83,12 @@ def render_financial_flow(df_fin_view):
             names="Tipo",
             color="Tipo",
             color_discrete_map=color_map,
-            hole=0.6 # Faz virar um Donut
+            hole=0.6,  # Faz virar um Donut
         )
-        fig_pie.update_traces(textinfo='percent+label')
-        fig_pie.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0), height=300)
+        fig_pie.update_traces(textinfo="percent+label")
+        fig_pie.update_layout(
+            showlegend=False, margin=dict(t=0, b=0, l=0, r=0), height=300
+        )
         st.plotly_chart(fig_pie, use_container_width=True)
 
     # 3. Gráfico de Barras Horizontais (Ranking)
@@ -108,23 +126,25 @@ def render_financial_flow(df_fin_view):
             y="Itens de Fatura",
             orientation="h",
             color="Tipo",
-            text="Texto_Detalhado", # Mostra valor + impostos no texto
+            text="Texto_Detalhado",  # Mostra valor + impostos no texto
             hover_data={
                 "Valor (R$)": ":,.2f",
                 **hover_data_dict,
             },
-            color_discrete_map=color_map
+            color_discrete_map=color_map,
         )
 
-        fig_rank.update_traces(textposition='outside', textfont_size=9)
+        fig_rank.update_traces(textposition="outside", textfont_size=9)
         fig_rank.update_layout(
             showlegend=True,
             legend_title=None,
-            legend=dict(orientation="h", y=1.1), # Legenda no topo
+            legend=dict(orientation="h", y=1.1),  # Legenda no topo
             xaxis_title=None,
             yaxis_title=None,
             height=400,
-            margin=dict(t=0, b=0, l=0, r=0)
+            margin=dict(t=0, b=0, l=0, r=0),
         )
-        fig_rank.update_xaxes(visible=False) # Remove eixo X (números em baixo) para limpar
+        fig_rank.update_xaxes(
+            visible=False
+        )  # Remove eixo X (números em baixo) para limpar
         st.plotly_chart(fig_rank, use_container_width=True)

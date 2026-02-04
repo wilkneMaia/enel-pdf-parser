@@ -370,7 +370,9 @@ def extract_data_from_pdf(file_path, password=None):
         for col in numeric_cols:
             if col in df_fin.columns:
                 # Normaliza valores negativos e converte para string
-                df_fin[col] = df_fin[col].astype(str).apply(normalize_negative_value).str.strip()
+                df_fin[col] = (
+                    df_fin[col].astype(str).apply(normalize_negative_value).str.strip()
+                )
                 # Converte para float, ignorando valores vazios ou inválidos
                 df_fin[col] = pd.to_numeric(df_fin[col], errors="coerce").fillna(0)
     else:
@@ -395,7 +397,9 @@ def extract_data_from_pdf(file_path, password=None):
         for col in numeric_cols_med:
             if col in df_med.columns:
                 # Normaliza valores negativos e converte para string
-                df_med[col] = df_med[col].astype(str).apply(normalize_negative_value).str.strip()
+                df_med[col] = (
+                    df_med[col].astype(str).apply(normalize_negative_value).str.strip()
+                )
                 # Converte para float, ignorando valores vazios ou inválidos
                 df_med[col] = pd.to_numeric(df_med[col], errors="coerce").fillna(0)
     else:

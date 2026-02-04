@@ -7,6 +7,7 @@ DB_FOLDER = "data/database"
 FILE_FATURAS = os.path.join(DB_FOLDER, "faturas.parquet")
 FILE_MEDICAO = os.path.join(DB_FOLDER, "medicao.parquet")
 
+
 def init_db():
     """Garante que a pasta e os arquivos existam."""
     os.makedirs(DB_FOLDER, exist_ok=True)
@@ -16,6 +17,7 @@ def init_db():
 
     if not os.path.exists(FILE_MEDICAO):
         pd.DataFrame().to_parquet(FILE_MEDICAO)
+
 
 def _upsert_dataframe(df_new, file_path, keys=["Referência"]):
     """
@@ -54,7 +56,9 @@ def _upsert_dataframe(df_new, file_path, keys=["Referência"]):
         # 4. Remove do banco antigo tudo que coincidir com as novas referências
         # Merge com indicator=True ajuda a achar a interseção
         df_merged = df_old.merge(refs_to_update, on=keys, how="left", indicator=True)
-        df_kept = df_old[df_merged["_merge"] == "left_only"] # Mantém só o que NÃO está no novo lote
+        df_kept = df_old[
+            df_merged["_merge"] == "left_only"
+        ]  # Mantém só o que NÃO está no novo lote
 
         # 5. Concatena (Antigos Mantidos + Novos)
         df_final = pd.concat([df_kept, df_new], ignore_index=True)
@@ -66,6 +70,7 @@ def _upsert_dataframe(df_new, file_path, keys=["Referência"]):
     except Exception as e:
         print(f"❌ Erro ao salvar parquet: {e}")
         return False
+
 
 def save_data(df_financeiro, df_medicao):
     """
@@ -80,13 +85,16 @@ def save_data(df_financeiro, df_medicao):
     # Salva Financeiro (Chave: Referência + Itens de Fatura para garantir unicidade fina)
     # Mas para substituir o mês inteiro, melhor usar apenas 'Referência' como chave de deleção do antigo
     if not df_financeiro.empty:
-        success_fin = _upsert_dataframe(df_financeiro, FILE_FATURAS, keys=["Referência"])
+        success_fin = _upsert_dataframe(
+            df_financeiro, FILE_FATURAS, keys=["Referência"]
+        )
 
     # Salva Medição
     if not df_medicao.empty:
         success_med = _upsert_dataframe(df_medicao, FILE_MEDICAO, keys=["Referência"])
 
     return success_fin and success_med
+
 
 def load_data():
     """Carrega os dados dos arquivos Parquet para memória."""

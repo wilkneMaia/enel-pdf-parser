@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+
 # --- ALTERAÇÃO 1: Removi 'total_custo' dos argumentos ---
 def render_taxometer(df_fin_view):
     """
@@ -139,7 +140,9 @@ def render_taxometer(df_fin_view):
     # Agrupa itens com mesmo nome (ex: duas bandeiras vermelhas)
     if not df_treemap_unificado.empty:
         df_treemap_unificado = (
-            df_treemap_unificado.groupby(["Item", "Categoria Macro", "Cor"])["Valor (R$)"]
+            df_treemap_unificado.groupby(["Item", "Categoria Macro", "Cor"])[
+                "Valor (R$)"
+            ]
             .sum()
             .reset_index()
         )
@@ -225,7 +228,9 @@ def render_taxometer(df_fin_view):
                 xaxis_title=None,
                 yaxis_title=None,
                 height=300,
-                margin=dict(t=0, b=0, l=0, r=50),  # Aumenta margem direita para evitar corte
+                margin=dict(
+                    t=0, b=0, l=0, r=50
+                ),  # Aumenta margem direita para evitar corte
                 showlegend=False,
             )
             fig_bar.update_traces(textposition="outside", cliponaxis=False)

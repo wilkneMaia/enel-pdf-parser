@@ -18,20 +18,21 @@ TAX_TABLES = {
     # Tabela fornecida pelo usuário (Lei 757/03)
     # ATENÇÃO: Valores decimais representam PORCENTAGEM (0.2072 = 20.72%)
     "LEI_757_2003": [
-        (0, 50, 0.00),       # Isento
-        (51, 100, 0.0059),   # 0.59%
+        (0, 50, 0.00),  # Isento
+        (51, 100, 0.0059),  # 0.59%
         (101, 150, 0.0145),  # 1.45%
         (151, 200, 0.0356),  # 3.56%
         (201, 250, 0.0617),  # 6.17%
         (251, 300, 0.1009),  # 10.09%
         (301, 400, 0.1447),  # 14.47%
         (401, 500, 0.2072),  # 20.72% <--- Faixa comum residencial
-        (501, 99999, 0.2777) # 27.77%
+        (501, 99999, 0.2777),  # 27.77%
     ]
 }
 
 # Define qual tabela está ativa no sistema de auditoria
 ACTIVE_TABLE_KEY = "LEI_757_2003"
+
 
 def get_law_rate(consumption_kwh: float, table_key: str = None) -> float:
     """
@@ -49,6 +50,7 @@ def get_law_rate(consumption_kwh: float, table_key: str = None) -> float:
 
     return 0.0
 
+
 def get_cip_expected_value(consumption_kwh: float, table_key: str = None) -> float:
     """
     Calcula o valor final esperado em REAIS (R$).
@@ -64,6 +66,7 @@ def get_cip_expected_value(consumption_kwh: float, table_key: str = None) -> flo
     else:
         # É valor fixo (Leis antigas) ou Isento (0.0)
         return rate
+
 
 def get_available_tables():
     """Retorna lista de tabelas disponíveis para seleção na UI."""

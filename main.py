@@ -1,7 +1,7 @@
 import os
 import glob
 import pandas as pd
-from tqdm import tqdm # Barra de progresso (opcional, se não tiver, remova)
+from tqdm import tqdm  # Barra de progresso (opcional, se não tiver, remova)
 
 # --- IMPORTS DA NOVA ARQUITETURA ---
 try:
@@ -16,6 +16,7 @@ except ImportError as e:
 # --- CONFIGURAÇÃO ---
 INPUT_FOLDER = "data/raw"
 EXTENSIONS = ["*.pdf", "*.PDF"]
+
 
 def batch_process():
     """
@@ -59,11 +60,13 @@ def batch_process():
                 # Tenta desbloquear sem senha ou loga erro
                 unlocked_path = unlock_pdf_file(pdf_path)
                 if not unlocked_path:
-                    print(f"🔒 PULO: {filename} tem senha e não foi possível abrir automaticamente.")
+                    print(
+                        f"🔒 PULO: {filename} tem senha e não foi possível abrir automaticamente."
+                    )
                     erros += 1
                     continue
             else:
-                unlocked_path = pdf_path # Já está aberto
+                unlocked_path = pdf_path  # Já está aberto
 
             # B. Extração
             df_fin, df_med = extract_data_from_pdf(unlocked_path)
@@ -95,6 +98,7 @@ def batch_process():
     print(f"✅ Sucessos: {sucesso}")
     print(f"❌ Falhas:   {erros}")
     print("💡 Abra o Dashboard ('streamlit run Home.py') para ver os dados.")
+
 
 if __name__ == "__main__":
     batch_process()

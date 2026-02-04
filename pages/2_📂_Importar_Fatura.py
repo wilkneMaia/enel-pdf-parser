@@ -26,11 +26,15 @@ if "uploader_key" not in st.session_state:
 uploaded_file = st.file_uploader(
     "Escolha o arquivo PDF (Enel)",
     type=["pdf"],
-    key=f"uploader_{st.session_state['uploader_key']}"
+    key=f"uploader_{st.session_state['uploader_key']}",
 )
 
 # Senha opcional (caso o usuário saiba que precisa)
-password = st.text_input("Senha do PDF (Opcional)", type="password", help="Geralmente os 5 primeiros dígitos do CPF.")
+password = st.text_input(
+    "Senha do PDF (Opcional)",
+    type="password",
+    help="Geralmente os 5 primeiros dígitos do CPF.",
+)
 
 if uploaded_file is not None:
     st.divider()
@@ -38,7 +42,9 @@ if uploaded_file is not None:
     col_btn, col_status = st.columns([1, 2])
 
     with col_btn:
-        processar = st.button("🚀 Processar Arquivo", type="primary", use_container_width=True)
+        processar = st.button(
+            "🚀 Processar Arquivo", type="primary", use_container_width=True
+        )
 
     if processar:
         with st.status("Processando...", expanded=True) as status:
@@ -55,11 +61,15 @@ if uploaded_file is not None:
                     # Se falhou, verificamos se é porque tem senha e o usuário não digitou
                     if check_is_encrypted(uploaded_file) and not password:
                         status.update(label="Erro: Arquivo Protegido", state="error")
-                        st.error("🔒 Este arquivo precisa de senha. Digite-a no campo acima e tente novamente.")
+                        st.error(
+                            "🔒 Este arquivo precisa de senha. Digite-a no campo acima e tente novamente."
+                        )
                         st.stop()
                     else:
                         status.update(label="Erro no Desbloqueio", state="error")
-                        st.error("❌ Falha ao abrir o PDF. Verifique se o arquivo está válido.")
+                        st.error(
+                            "❌ Falha ao abrir o PDF. Verifique se o arquivo está válido."
+                        )
                         st.stop()
 
                 # 2. Extração
@@ -68,11 +78,17 @@ if uploaded_file is not None:
 
                 if df_fin.empty:
                     status.update(label="Erro de Leitura", state="error")
-                    st.error("⚠️ Não conseguimos ler os dados financeiros. O layout pode ser incompatível.")
+                    st.error(
+                        "⚠️ Não conseguimos ler os dados financeiros. O layout pode ser incompatível."
+                    )
                     st.stop()
 
                 # Mostra o que achou (Feedback Rápido)
-                ref = df_fin["Referência"].iloc[0] if "Referência" in df_fin.columns else "Desconhecido"
+                ref = (
+                    df_fin["Referência"].iloc[0]
+                    if "Referência" in df_fin.columns
+                    else "Desconhecido"
+                )
                 total = df_fin["Valor (R$)"].sum()
                 st.write(f"✅ Fatura identificada: **{ref}** (Total: R$ {total:.2f})")
 
@@ -104,7 +120,9 @@ if uploaded_file is not None:
 
 # --- DICA DE RODAPÉ ---
 else:
-    st.info("💡 Dica: Você pode importar várias faturas uma por uma para construir seu histórico.")
+    st.info(
+        "💡 Dica: Você pode importar várias faturas uma por uma para construir seu histórico."
+    )
 
 # --- HISTÓRICO DE IMPORTAÇÕES (Movido de Monitor de Logs) ---
 st.divider()
@@ -129,52 +147,66 @@ if not df_faturas.empty:
     df_agrupado = df_faturas.groupby("Referência")["Valor (R$)"].sum().reset_index()
 
     try:
-        df_agrupado["Data_Ordenacao"] = pd.to_datetime(df_agrupado["Referência"], format="%b/%Y", errors="coerce")
+        df_agrupado["Data_Ordenacao"] = pd.to_datetime(
+            df_agrupado["Referência"], format="%b/%Y", errors="coerce"
+        )
         df_agrupado = df_agrupado.sort_values("Data_Ordenacao")
     except:
         pass
 
     fig_evolucao = px.line(
-        df_agrupado,
-        x="Referência",
-        y="Valor (R$)",
-        markers=True,
-        line_shape="spline"
+        df_agrupado, x="Referência", y="Valor (R$)", markers=True, line_shape="spline"
     )
     fig_evolucao.update_traces(line_color="#00CC96", line_width=3)
     st.plotly_chart(fig_evolucao, use_container_width=True)
 
     # 4. Tabela de Detalhes
     st.markdown("### 📋 Faturas Cadastradas")
-    df_resumo_mes = df_faturas.groupby("Referência").agg({
-        "Valor (R$)": "sum",
-        "Itens de Fatura": "count"
-    }).reset_index()
+    df_resumo_mes = (
+        df_faturas.groupby("Referência")
+        .agg({"Valor (R$)": "sum", "Itens de Fatura": "count"})
+        .reset_index()
+    )
     df_resumo_mes.rename(columns={"Itens de Fatura": "Qtd. Itens"}, inplace=True)
 
     if not df_medicao.empty and "P.Horário/Segmento" in df_medicao.columns:
-        mask_inj = df_medicao["P.Horário/Segmento"].astype(str).str.contains("INJ", case=False, na=False)
-        df_med_agg = df_medicao[~mask_inj].groupby("Referência")["Consumo kWh"].sum().reset_index()
+        mask_inj = (
+            df_medicao["P.Horário/Segmento"]
+            .astype(str)
+            .str.contains("INJ", case=False, na=False)
+        )
+        df_med_agg = (
+            df_medicao[~mask_inj]
+            .groupby("Referência")["Consumo kWh"]
+            .sum()
+            .reset_index()
+        )
         df_resumo_mes = pd.merge(df_resumo_mes, df_med_agg, on="Referência", how="left")
 
     st.dataframe(
         df_resumo_mes,
         column_config={
-            "Valor (R$)": st.column_config.NumberColumn("Valor Total", format="R$ %.2f"),
+            "Valor (R$)": st.column_config.NumberColumn(
+                "Valor Total", format="R$ %.2f"
+            ),
             "Consumo kWh": st.column_config.NumberColumn("Consumo", format="%d kWh"),
             "Qtd. Itens": st.column_config.NumberColumn("Itens Extraídos"),
         },
         use_container_width=True,
-        hide_index=True
+        hide_index=True,
     )
 
     with st.expander("🗑️ Zona de Perigo"):
         st.warning("Isso apagará todo o histórico de faturas.")
         if st.button("Limpar Banco de Dados Completo"):
-            if os.path.exists("data/database/faturas.parquet"): os.remove("data/database/faturas.parquet")
-            if os.path.exists("data/database/medicao.parquet"): os.remove("data/database/medicao.parquet")
+            if os.path.exists("data/database/faturas.parquet"):
+                os.remove("data/database/faturas.parquet")
+            if os.path.exists("data/database/medicao.parquet"):
+                os.remove("data/database/medicao.parquet")
             st.success("Banco de dados limpo! Recarregue a página.")
             time.sleep(1)
             st.rerun()
 else:
-    st.info("📭 O banco de dados está vazio. Importe sua primeira fatura acima para ver o histórico.")
+    st.info(
+        "📭 O banco de dados está vazio. Importe sua primeira fatura acima para ver o histórico."
+    )

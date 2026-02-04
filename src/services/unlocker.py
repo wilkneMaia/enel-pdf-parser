@@ -2,6 +2,7 @@ import pikepdf
 import os
 import streamlit as st
 
+
 def unlock_pdf_file(uploaded_file, password=None):
     """
     Recebe um arquivo (UploadedFile ou caminho) e retorna o caminho
@@ -17,7 +18,7 @@ def unlock_pdf_file(uploaded_file, password=None):
     os.makedirs(output_dir, exist_ok=True)
 
     # Nome seguro para o arquivo
-    if hasattr(uploaded_file, 'name'):
+    if hasattr(uploaded_file, "name"):
         filename = uploaded_file.name
     else:
         filename = os.path.basename(uploaded_file)
@@ -45,13 +46,14 @@ def unlock_pdf_file(uploaded_file, password=None):
         print(f"❌ Erro ao desbloquear PDF: {e}")
         return None
 
+
 def check_is_encrypted(uploaded_file):
     """Verifica se o arquivo precisa de senha sem tentar desbloquear totalmente."""
     try:
         pdf = pikepdf.open(uploaded_file)
         pdf.close()
-        return False # Não tem senha
+        return False  # Não tem senha
     except pikepdf.PasswordError:
-        return True # Tem senha
+        return True  # Tem senha
     except:
-        return False # Erro de leitura, assume sem senha por enquanto
+        return False  # Erro de leitura, assume sem senha por enquanto

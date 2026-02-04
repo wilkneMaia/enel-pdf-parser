@@ -7,7 +7,7 @@ st.set_page_config(
     page_title="Dashboard Enel",
     page_icon="⚡",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 # --- IMPORTS DA NOVA ARQUITETURA ---
@@ -16,10 +16,14 @@ try:
     from src.components.taxometer import render_taxometer
     from src.components.financial_flow import render_financial_flow
     from src.components.public_lighting import render_public_lighting
+    from src.components.consumption_dashboard import render_consumption_dashboard
 except ImportError as e:
     st.error(f"❌ Erro Crítico de Importação: {e}")
-    st.info("Verifique se a pasta 'src' existe e se você rodou o script de configuração de pastas.")
+    st.info(
+        "Verifique se a pasta 'src' existe e se você rodou o script de configuração de pastas."
+    )
     st.stop()
+
 
 # --- FUNÇÕES AUXILIARES ---
 def get_month_year_filter(df):
@@ -29,8 +33,13 @@ def get_month_year_filter(df):
 
     # Assume formato "MES/ANO" (ex: JAN/2025)
     # Extrai o ANO para filtro macro
-    anos = sorted(list(set([x.split("/")[-1] for x in df["Referência"].unique() if "/" in str(x)])))
+    anos = sorted(
+        list(
+            set([x.split("/")[-1] for x in df["Referência"].unique() if "/" in str(x)])
+        )
+    )
     return anos
+
 
 def main():
     st.title("⚡ Dashboard de Gestão Energética")
@@ -42,7 +51,9 @@ def main():
     # Validação Inicial
     if df_faturas.empty:
         st.warning("📭 Nenhum dado encontrado.")
-        st.info("👈 Use o menu lateral para acessar **'Importar Fatura'** e carregar seu primeiro PDF.")
+        st.info(
+            "👈 Use o menu lateral para acessar **'Importar Fatura'** e carregar seu primeiro PDF."
+        )
 
         # Botão de atalho para ajudar
         if st.button("Ir para Importação"):
@@ -55,18 +66,26 @@ def main():
     # Filtro de Ano
     anos_disponiveis = get_month_year_filter(df_faturas)
     if anos_disponiveis:
-        ano_selecionado = st.sidebar.selectbox("📅 Selecione o Ano", anos_disponiveis, index=len(anos_disponiveis)-1)
+        ano_selecionado = st.sidebar.selectbox(
+            "📅 Selecione o Ano", anos_disponiveis, index=len(anos_disponiveis) - 1
+        )
     else:
         ano_selecionado = None
 
     # Aplica Filtros
     if ano_selecionado:
         # Filtra onde a string de Referência contém o Ano (ex: "2025")
-        mask_ano_fat = df_faturas["Referência"].astype(str).str.contains(ano_selecionado, na=False)
+        mask_ano_fat = (
+            df_faturas["Referência"].astype(str).str.contains(ano_selecionado, na=False)
+        )
         df_fat_view = df_faturas[mask_ano_fat].copy()
 
         if not df_medicao.empty and "Referência" in df_medicao.columns:
-            mask_ano_med = df_medicao["Referência"].astype(str).str.contains(ano_selecionado, na=False)
+            mask_ano_med = (
+                df_medicao["Referência"]
+                .astype(str)
+                .str.contains(ano_selecionado, na=False)
+            )
             df_med_view = df_medicao[mask_ano_med].copy()
         else:
             df_med_view = pd.DataFrame()
@@ -76,12 +95,16 @@ def main():
 
     # Filtro Mês (Opcional - Multiselect)
     meses_disponiveis = df_fat_view["Referência"].unique()
-    meses_selecionados = st.sidebar.multiselect("📆 Filtrar Meses (Opcional)", meses_disponiveis)
+    meses_selecionados = st.sidebar.multiselect(
+        "📆 Filtrar Meses (Opcional)", meses_disponiveis
+    )
 
     if meses_selecionados:
         df_fat_view = df_fat_view[df_fat_view["Referência"].isin(meses_selecionados)]
         if not df_med_view.empty:
-            df_med_view = df_med_view[df_med_view["Referência"].isin(meses_selecionados)]
+            df_med_view = df_med_view[
+                df_med_view["Referência"].isin(meses_selecionados)
+            ]
 
     # KPI Global do Período Filtrado
     total_periodo = df_fat_view["Valor (R$)"].sum()
@@ -89,11 +112,14 @@ def main():
     st.sidebar.metric("💰 Total no Período", f"R$ {total_periodo:,.2f}")
 
     # 3. Renderização das Abas (Componentes)
-    tab1, tab2, tab3 = st.tabs([
-        "💰 Taxômetro (Impostos)",
-        "📉 Fluxo Financeiro",
-        "🔦 Auditoria Iluminação"
-    ])
+    tab1, tab2, tab3, tab4 = st.tabs(
+        [
+            "💰 Taxômetro (Impostos)",
+            "📉 Fluxo Financeiro",
+            "⚡ Consumo (kWh)",
+            "🔦 Auditoria Iluminação",
+        ]
+    )
 
     with tab1:
         # Chama o componente sem passar 'total_custo' (ele calcula sozinho agora)
@@ -103,8 +129,12 @@ def main():
         render_financial_flow(df_fat_view)
 
     with tab3:
+        render_consumption_dashboard(df_med_view, df_fat_view)
+
+    with tab4:
         # Passa ambas as tabelas para cruzar dados financeiros com medição (kWh)
         render_public_lighting(df_fat_view, df_med_view)
+
 
 if __name__ == "__main__":
     main()
