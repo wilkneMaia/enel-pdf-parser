@@ -230,3 +230,5 @@ output/*
 # Ignorar arquivos temporários do Python e do Sistema
 *.pyc
 .DS_Store
+
+data/database/

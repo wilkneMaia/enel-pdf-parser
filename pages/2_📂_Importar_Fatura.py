@@ -1,197 +1,105 @@
 import streamlit as st
-import pandas as pd
 import os
-import sys
-from dotenv import load_dotenv
 import time
 
-# --- BLOCO DE IMPORTAÇÃO (Mantido) ---
-current_dir = os.path.dirname(os.path.abspath(__file__))
-root_dir = os.path.dirname(current_dir)
-if root_dir not in sys.path:
-    sys.path.append(root_dir)
-
+# --- IMPORTS DA NOVA ARQUITETURA ---
 try:
-    from extractor import extract_invoice_data
-except ImportError:
-    from src.extractor import extract_invoice_data
-
-try:
-    from database_manager import save_invoice_data
-except ImportError:
-    st.error("❌ Arquivo 'database_manager.py' não encontrado na raiz.")
+    from src.services.unlocker import unlock_pdf_file, check_is_encrypted
+    from src.services.extractor import extract_data_from_pdf
+    from src.database.manager import save_data
+except ImportError as e:
+    st.error(f"Erro de configuração: {e}")
     st.stop()
 
-load_dotenv()
-PDF_PASSWORD = os.getenv("PDF_PASSWORD")
+st.set_page_config(page_title="Importar Fatura", page_icon="📂", layout="centered")
 
-st.set_page_config(page_title="Importar Fatura", page_icon="📂")
-st.title("📂 Importação Manual de Faturas")
+st.title("📂 Importar Nova Fatura")
+st.markdown("Faça o upload da sua conta de energia (PDF) para alimentar os gráficos.")
 
-
-# --- FUNÇÃO AUXILIAR DE CONVERSÃO ---
-def universal_converter(val):
-    if pd.isna(val) or str(val).strip() == "":
-        return 0.0
-    if isinstance(val, (int, float)):
-        return float(val)
-    s = str(val).strip().upper().replace("R$", "").replace(" ", "").replace("-", "")
-    if "," in s:
-        s = s.replace(".", "").replace(",", ".")
-    try:
-        sign = -1.0 if "-" in str(val) else 1.0
-        return float(s) * sign
-    except ValueError:
-        return 0.0
-
-
-# --- GERENCIAMENTO DE ESTADO (O SEGREDO DO RESET) ---
-if "dados_processados" not in st.session_state:
-    st.session_state["dados_processados"] = None
-if "ultimo_arquivo" not in st.session_state:
-    st.session_state["ultimo_arquivo"] = None
-
-# Esta chave controla o reset do widget de upload
+# --- ÁREA DE UPLOAD ---
+# Usamos key=st.session_state para poder resetar o uploader depois
 if "uploader_key" not in st.session_state:
     st.session_state["uploader_key"] = 0
 
-# --- WIDGET DE UPLOAD (Com chave dinâmica) ---
-# Toda vez que uploader_key muda, este componente é recriado do zero (limpo)
 uploaded_file = st.file_uploader(
-    "Arraste ou Selecione o PDF aqui",
+    "Escolha o arquivo PDF (Enel)",
     type=["pdf"],
-    key=f"pdf_uploader_{st.session_state['uploader_key']}",
+    key=f"uploader_{st.session_state['uploader_key']}"
 )
 
-# --- LÓGICA DE PROCESSAMENTO ---
-if uploaded_file:
-    # Verifica se é um arquivo novo
-    arquivo_novo = st.session_state["ultimo_arquivo"] != uploaded_file.name
+# Senha opcional (caso o usuário saiba que precisa)
+password = st.text_input("Senha do PDF (Opcional)", type="password", help="Geralmente os 5 primeiros dígitos do CPF.")
 
-    # Processa se for novo ou se a memória estiver vazia
-    if arquivo_novo or st.session_state["dados_processados"] is None:
-        with st.spinner("⚡ Processando PDF automaticamente..."):
+if uploaded_file is not None:
+    st.divider()
+
+    col_btn, col_status = st.columns([1, 2])
+
+    with col_btn:
+        processar = st.button("🚀 Processar Arquivo", type="primary", use_container_width=True)
+
+    if processar:
+        with st.status("Processando...", expanded=True) as status:
+            temp_path = None
             try:
-                uploaded_file.seek(0)
-                data = extract_invoice_data(uploaded_file, password=PDF_PASSWORD)
+                # 1. Desbloqueio
+                st.write("🔓 Verificando criptografia...")
 
-                if data and data.get("items"):
-                    # Processamento
-                    client_id = data.get("client_id", "N/A")
-                    ref = data.get("reference", "N/A")
-                    items = data.get("items", [])
-                    meas = data.get("measurement", [])
+                # Se o usuário digitou senha, usamos. Se não, tentamos sem.
+                senha_teste = password if password else None
+                temp_path = unlock_pdf_file(uploaded_file, password=senha_teste)
 
-                    # Conversão Numérica
-                    final_items = []
-                    cols_num = [
-                        "Quant.",
-                        "Preço unit (R$) com tributos",
-                        "Valor (R$)",
-                        "PIS/COFINS",
-                        "Base Calc ICMS (R$)",
-                        "Alíquota ICMS",
-                        "ICMS",
-                        "Tarifa unit (R$)",
-                    ]
+                if not temp_path:
+                    # Se falhou, verificamos se é porque tem senha e o usuário não digitou
+                    if check_is_encrypted(uploaded_file) and not password:
+                        status.update(label="Erro: Arquivo Protegido", state="error")
+                        st.error("🔒 Este arquivo precisa de senha. Digite-a no campo acima e tente novamente.")
+                        st.stop()
+                    else:
+                        status.update(label="Erro no Desbloqueio", state="error")
+                        st.error("❌ Falha ao abrir o PDF. Verifique se o arquivo está válido.")
+                        st.stop()
 
-                    for i in items:
-                        item_clean = i.copy()
-                        item_clean["Nº do Cliente"] = client_id
-                        item_clean["Referência"] = ref
-                        for col in cols_num:
-                            if col in item_clean:
-                                item_clean[col] = universal_converter(item_clean[col])
-                        item_clean["Valor (R$)"] = universal_converter(
-                            item_clean.get("Valor (R$)")
-                        )
-                        final_items.append(item_clean)
+                # 2. Extração
+                st.write("📝 Extraindo dados inteligentes...")
+                df_fin, df_med = extract_data_from_pdf(temp_path)
 
-                    final_meas = []
-                    for m in meas:
-                        m_clean = m.copy()
-                        m_clean["Nº do Cliente"] = client_id
-                        m_clean["Referência"] = ref
-                        for col in [
-                            "Leitura (Anterior)",
-                            "Leitura (Atual)",
-                            "Fator Multiplicador",
-                            "Consumo kWh",
-                        ]:
-                            if col in m_clean:
-                                m_clean[col] = universal_converter(m_clean[col])
-                        final_meas.append(m_clean)
+                if df_fin.empty:
+                    status.update(label="Erro de Leitura", state="error")
+                    st.error("⚠️ Não conseguimos ler os dados financeiros. O layout pode ser incompatível.")
+                    st.stop()
 
-                    st.session_state["dados_processados"] = {
-                        "filename": uploaded_file.name,
-                        "client_id": client_id,
-                        "reference": ref,
-                        "items": final_items,
-                        "meas": final_meas,
-                    }
-                    st.session_state["ultimo_arquivo"] = uploaded_file.name
+                # Mostra o que achou (Feedback Rápido)
+                ref = df_fin["Referência"].iloc[0] if "Referência" in df_fin.columns else "Desconhecido"
+                total = df_fin["Valor (R$)"].sum()
+                st.write(f"✅ Fatura identificada: **{ref}** (Total: R$ {total:.2f})")
+
+                # 3. Salvamento
+                st.write("💾 Salvando no banco de dados...")
+                sucesso = save_data(df_fin, df_med)
+
+                if sucesso:
+                    status.update(label="Concluído!", state="complete")
+                    st.balloons()
+                    st.success(f"Fatura de **{ref}** importada com sucesso!")
+
+                    # Reset do Uploader para permitir novo arquivo
+                    time.sleep(2)
+                    st.session_state["uploader_key"] += 1
                     st.rerun()
                 else:
-                    st.error(
-                        "⚠️ O PDF foi lido, mas não encontramos dados. Verifique o arquivo."
-                    )
-                    st.session_state["dados_processados"] = None
-                    st.session_state["ultimo_arquivo"] = uploaded_file.name
-            except Exception as e:
-                st.error(f"Erro ao processar: {e}")
-                st.session_state["dados_processados"] = None
-
-# --- EXIBIÇÃO E AÇÃO ---
-if uploaded_file and st.session_state["dados_processados"]:
-    if st.session_state["dados_processados"]["filename"] == uploaded_file.name:
-        dados = st.session_state["dados_processados"]
-
-        st.divider()
-        st.info("✅ Arquivo processado. Confira os dados abaixo:")
-
-        # Resumo Compacto
-        c1, c2, c3 = st.columns(3)
-        total = sum(i["Valor (R$)"] for i in dados["items"])
-        c1.metric("Cliente", dados["client_id"])
-        c2.metric("Referência", dados["reference"])
-        c3.metric("Total", f"R$ {total:,.2f}")
-
-        # Tabela (Expansível para economizar espaço)
-        with st.expander("Ver Detalhes dos Itens"):
-            st.dataframe(pd.DataFrame(dados["items"]), use_container_width=True)
-
-        st.markdown("---")
-
-        # --- BOTÃO DE SALVAR E LIMPAR ---
-        if st.button(
-            "💾 Salvar e Limpar Tela", type="primary", use_container_width=True
-        ):
-            try:
-                # 1. Salva no Disco
-                status_inv, status_meas = save_invoice_data(
-                    dados["items"], dados["meas"]
-                )
-
-                # 2. Limpa o Cache da Home (Importante!)
-                st.cache_data.clear()
-
-                # 3. Notificação Bonita
-                st.toast(f"Sucesso! Fatura de {dados['reference']} salva.", icon="🎉")
-
-                # --- O TRUQUE DO RESET ---
-                st.session_state["dados_processados"] = None  # Limpa dados
-                st.session_state["ultimo_arquivo"] = None  # Limpa referência
-                st.session_state["uploader_key"] += 1  # FORÇA O RESET DO UPLOADER
-
-                # 4. Mensagem Final e Recarregamento
-                time.sleep(1)  # Dá um tempinho para ver o Toast
-                st.rerun()  # Recarrega a página (que virá limpa)
+                    status.update(label="Erro ao Salvar", state="error")
+                    st.error("Erro ao escrever no banco de dados.")
 
             except Exception as e:
-                st.error(f"Erro ao gravar: {e}")
+                status.update(label="Erro Inesperado", state="error")
+                st.error(f"Ocorreu um erro: {e}")
 
-# --- MENSAGEM DE BOAS VINDAS (Quando a tela está vazia) ---
-elif not uploaded_file:
-    # Se acabamos de salvar e limpar, mostramos uma confirmação
-    if "uploader_key" in st.session_state and st.session_state["uploader_key"] > 0:
-        st.success("✨ Arquivo salvo com sucesso! Pronto para o próximo.")
+            finally:
+                # Limpeza
+                if temp_path and os.path.exists(temp_path):
+                    os.remove(temp_path)
+
+# --- DICA DE RODAPÉ ---
+else:
+    st.info("💡 Dica: Você pode importar várias faturas uma por uma para construir seu histórico.")
