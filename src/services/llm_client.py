@@ -22,11 +22,8 @@ class GoogleGenaiAdapter(LLM):
     def __init__(self, api_key: str, model: str = "gemini-1.5-flash"):
         try:
             import google.genai as genai
-        except Exception:
-            try:
-                import google.generativeai as genai  # type: ignore
-            except Exception as e:  # pragma: no cover
-                raise ProviderUnavailable("google.genai/google.generativeai package not found")
+        except Exception as e:  # pragma: no cover
+            raise ProviderUnavailable("google.genai package not found")
         self.genai = genai
         self.api_key = api_key
         self.model = model
@@ -126,16 +123,12 @@ def available_providers() -> List[str]:
     mod_keys = set(sys.modules.keys())
 
     # Google: either already imported or available via installed package
-    google_present = any(
-        k == "google.genai" or k == "google.generativeai" or k.startswith("google.gen")
-        for k in mod_keys
-    )
+    google_present = any(k == "google.genai" or k.startswith("google.gen") for k in mod_keys)
     if not google_present:
         try:
-            if importlib.util.find_spec("google.genai") or importlib.util.find_spec("google.generativeai"):
+            if importlib.util.find_spec("google.genai"):
                 google_present = True
         except Exception:
-            # find_spec can raise if parent package missing; ignore and treat as not present
             google_present = False
     if google_present:
         providers.append("google")
@@ -166,7 +159,7 @@ def list_models(provider: str, api_key: str) -> Tuple[List[str], Optional[str]]:
             try:
                 import google.genai as genai  # type: ignore
             except Exception:
-                import google.generativeai as genai  # type: ignore
+                return [], "google.genai package not found"
             client = genai.Client(api_key=api_key)
             resp = list(client.models.list())
             model_names = [getattr(m, "name", str(m)) for m in resp]

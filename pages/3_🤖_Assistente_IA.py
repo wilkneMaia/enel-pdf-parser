@@ -18,6 +18,7 @@ except Exception as e:
 
 # Importa o wrapper LLM (fornece support multi-provedor)
 from src.services.llm_client import available_providers, list_models, create_adapter, ProviderUnavailable
+from src.services.logger import write_llm_log
 
 st.set_page_config(page_title="Assistente IA", page_icon="🤖", layout="wide")
 
@@ -122,9 +123,11 @@ with st.expander(
     )
 
     if api_key_input:
+        # Store temporarily in session for convenience; recommend using st.secrets for persistence
         st.session_state[f"llm_api_key_{provider}"] = api_key_input
         st.session_state["api_key_configured_any"] = True
         st.success("API Key configurada para provedor selecionado! Você pode fechar esta aba.")
+        st.info("Dica: para segurança, adicione sua chave em Streamlit Secrets (arquivo .streamlit/secrets.toml) ou em variáveis de ambiente. Exemplo (secrets.toml):\n[llm_api_keys]\n" + f"{provider} = \"<SUA_API_KEY>\"")
 
     if f"llm_api_key_{provider}" not in st.session_state:
         st.warning("🔒 Aguardando API Key para iniciar o LLM selecionado...")
@@ -133,8 +136,24 @@ with st.expander(
         st.stop()
 
     models_key = f"llm_{provider}_models"
+    def get_api_key(p: str):
+        # Prefer st.secrets > env var > session_state
+        try:
+            if hasattr(st, 'secrets') and isinstance(st.secrets, dict):
+                keys = st.secrets.get('llm_api_keys') or {}
+                if keys and keys.get(p):
+                    return keys.get(p)
+        except Exception:
+            pass
+        # Env var fallback
+        env_key = os.environ.get(f"LLM_API_KEY_{p.upper()}") or os.environ.get(f"{p.upper()}_API_KEY")
+        if env_key:
+            return env_key
+        return st.session_state.get(f"llm_api_key_{p}")
+
     if models_key not in st.session_state:
-        models, err = list_models(provider, st.session_state[f"llm_api_key_{provider}"])
+        api_key_val = get_api_key(provider)
+        models, err = list_models(provider, api_key_val)
         st.session_state[models_key] = models
         st.session_state[f"{models_key}_raw"] = repr(models)
         st.session_state[f"{models_key}_last_error"] = err
@@ -159,15 +178,23 @@ with st.expander(
             )
 
     with col_models2:
-        if st.button("🔄 Recarregar modelos"):
-            models, err = list_models(provider, st.session_state[f"llm_api_key_{provider}"])
+        disabled_buttons = provider not in installed
+        if st.button("🔄 Recarregar modelos", disabled=disabled_buttons):
+            api_key_val = get_api_key(provider)
+            models, err = list_models(provider, api_key_val)
             st.session_state[models_key] = models
             st.session_state[f"{models_key}_raw"] = repr(models)
             st.session_state[f"{models_key}_last_error"] = err
+            # structured log (sanitized)
+            try:
+                write_llm_log(f"{provider}_models_list", {"provider": provider, "models_count": len(models), "error": err, "api_key_provided": bool(api_key_val)})
+            except Exception:
+                pass
             st.experimental_rerun()
 
-        if st.button("🧪 Testar conexão"):
-            models, err = list_models(provider, st.session_state[f"llm_api_key_{provider}"])
+        if st.button("🧪 Testar conexão", disabled=disabled_buttons):
+            api_key_val = get_api_key(provider)
+            models, err = list_models(provider, api_key_val)
             st.session_state[models_key] = models
             st.session_state[f"{models_key}_raw"] = repr(models)
             st.session_state[f"{models_key}_last_error"] = err
@@ -178,18 +205,11 @@ with st.expander(
                 st.success(f"Conexão OK — {count} modelo(s) encontrados para {provider}.")
                 if models:
                     st.info(f"Exemplo: {models[0]}")
-            # Grava resposta bruta em logs para auditoria
+            # structured log
             try:
-                os.makedirs("logs", exist_ok=True)
-                fname = os.path.join(
-                    "logs",
-                    f"{provider}_models_response_{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.log",
-                )
-                with open(fname, "w", encoding="utf-8") as fh:
-                    json.dump({"models": models, "error": err}, fh, ensure_ascii=False, indent=2)
-                st.info(f"Resposta bruta salva em: {fname}")
-            except Exception as e:
-                st.warning(f"Não foi possível salvar log: {e}")
+                write_llm_log(f"{provider}_models_test", {"provider": provider, "models_count": len(models), "error": err, "api_key_provided": bool(api_key_val)})
+            except Exception:
+                pass
 
 # Helper para (re)instanciar adapter LLM com modelo específico
 

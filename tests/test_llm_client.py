@@ -1,6 +1,7 @@
 import sys
 import types
 import pytest
+import importlib
 
 from src.services import llm_client
 
@@ -13,9 +14,10 @@ def test_available_providers_with_mocked_modules(monkeypatch):
     # Simulate that openai and anthropic are installed, google not
     monkeypatch.setitem(sys.modules, "openai", DummyModule("openai"))
     monkeypatch.setitem(sys.modules, "anthropic", DummyModule("anthropic"))
-    # Ensure google.* is not present
+    # Ensure google.genai is not present
     sys.modules.pop("google.genai", None)
-    sys.modules.pop("google.generativeai", None)
+    # Also simulate that importlib cannot find the installed package
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
 
     providers = llm_client.available_providers()
     assert "openai" in providers
