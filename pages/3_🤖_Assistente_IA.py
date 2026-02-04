@@ -3,6 +3,8 @@ import pandas as pd
 import os
 import json
 import traceback
+import re
+import time
 from datetime import datetime
 from src.database.manager import load_data
 
@@ -89,7 +91,7 @@ with st.expander(
     "⚙️ Configuração da IA (Backend & Provedor de LLM)", expanded=not st.session_state.get("api_key_configured_any", False)
 ):
     st.info("Escolha o backend de análise, o provedor de IA e insira a API Key correspondente.")
-    
+
     # Seletor de Backend
     st.subheader("Backend de Análise")
     backend_options = backends_available
@@ -98,14 +100,13 @@ with st.expander(
         "Qual backend deseja usar?",
         backend_labels,
         index=0 if "pandasai" in backends_available else 1,
-        key="agent_backend",
+        key="agent_backend_choice",
     )
     selected_backend = backend_labels.index(backend_choice)
     backend = ["pandasai", "langchain"][selected_backend]
-    st.session_state["agent_backend"] = backend
-    
+
     st.divider()
-    
+
     # Seletor de Provedor LLM
     st.subheader("Provedor de LLM")
     # Mostra todas as opções, indicando se o SDK está presente
@@ -229,6 +230,28 @@ def rebuild_llm_with_model(provider_name: str, model_name: str):
         st.error(f"Erro inesperado ao construir LLM adapter: {e}")
         return None
 
+
+def call_with_quota_retry(fn, max_retries: int = 4):
+    """Retry wrapper that handles quota/resource-exhausted errors and backoff."""
+    backoff = 1.0
+    for attempt in range(max_retries):
+        try:
+            return fn()
+        except Exception as e:
+            msg = str(e)
+            if "resource_exhausted" in msg.lower() or "quota" in msg.lower() or "429" in msg:
+                # try to parse suggested retry delay
+                m = re.search(r'retry in (\d+(?:\.\d+)?)s', msg, re.IGNORECASE)
+                if m:
+                    wait = float(m.group(1)) + 1.0
+                else:
+                    wait = backoff
+                    backoff = min(backoff * 2, 60.0)
+                time.sleep(wait)
+                continue
+            raise
+    raise RuntimeError("Max retries exceeded")
+
 # Instancia o LLM com o modelo selecionado
 llm = rebuild_llm_with_model(provider, selected_model)
 
@@ -256,13 +279,19 @@ field_descriptions = {
 
 # Instancia o agente (PandasAI ou LangChain) via factory
 try:
+    api_key_val = st.session_state.get(f"llm_api_key_{provider}")
     agent = create_agent(
         backend=backend,
         df=df_ia,
         llm=llm,
+        provider=provider,
+        api_key=api_key_val,
+        model=selected_model,
         config={
-            "verbose": True,
+            "verbose": False,
             "field_descriptions": field_descriptions,
+            "allow_dangerous_code": True,
+            "max_iterations": 1,
         },
     )
 except ValueError as e:
@@ -283,6 +312,7 @@ with st.sidebar:
     st.divider()
     if st.button("🗑️ Limpar Conversa", use_container_width=True):
         st.session_state["messages"] = []
+        st.session_state["fallback_attempts"] = 0
         st.rerun()
 
 # Inicializa histórico de mensagens
@@ -306,7 +336,7 @@ if prompt := st.chat_input("💬 Pergunte aos seus dados (Ex: Qual a média de g
         with st.spinner("🤖 Analisando..."):
             response = None
             try:
-                response = agent.chat(prompt)
+                response = call_with_quota_retry(lambda: agent.chat(prompt))
             except Exception as e:
                 err_str = str(e)
                 # Log silencioso
@@ -337,11 +367,20 @@ if prompt := st.chat_input("💬 Pergunte aos seus dados (Ex: Qual a média de g
                         new_llm = rebuild_llm_with_model(provider, new_model)
                         if new_llm is not None:
                             try:
+                                new_api_key = st.session_state.get(f"llm_api_key_{provider}")
                                 new_agent = create_agent(
                                     backend=backend,
                                     df=df_ia,
                                     llm=new_llm,
-                                    config={"verbose": True, "field_descriptions": field_descriptions},
+                                    provider=provider,
+                                    api_key=new_api_key,
+                                    model=new_model,
+                                    config={
+                                        "verbose": False,
+                                        "field_descriptions": field_descriptions,
+                                        "allow_dangerous_code": True,
+                                        "max_iterations": 1,
+                                    },
                                 )
                                 response = new_agent.chat(prompt)
                             except Exception as e2:
@@ -351,7 +390,48 @@ if prompt := st.chat_input("💬 Pergunte aos seus dados (Ex: Qual a média de g
                     else:
                         st.error(f"Erro: {e}")
                 else:
-                    st.error(f"Erro ao processar: {e}")
+                    # Try automatic fallback for quota errors
+                    if "resource_exhausted" in err_str.lower() or "quota" in err_str.lower() or "429" in err_str:
+                        st.warning("Quota do provedor detectada — tentando provedores alternativos...")
+                        # limit fallback attempts per session to avoid loops
+                        max_fallbacks = 3
+                        attempts = st.session_state.get("fallback_attempts", 0)
+                        if attempts >= max_fallbacks:
+                            st.error("Número máximo de tentativas de fallback atingido nesta sessão.")
+                        else:
+                            fallback_response = None
+                            used_provider = None
+                            for fb in ["openai", "anthropic", "google"]:
+                                if fb == provider:
+                                    continue
+                                fb_key = st.session_state.get(f"llm_api_key_{fb}")
+                                if not fb_key:
+                                    continue
+                                try:
+                                    fb_agent = create_agent(
+                                        backend=backend,
+                                        df=df_ia,
+                                        provider=fb,
+                                        api_key=fb_key,
+                                        model=selected_model,
+                                        config={"verbose": True, "field_descriptions": field_descriptions},
+                                    )
+                                    fallback_response = call_with_quota_retry(lambda: fb_agent.chat(prompt))
+                                    used_provider = fb
+                                    write_llm_log("fallback_used", {"from": provider, "to": fb, "prompt": prompt[:100]})
+                                    break
+                                except Exception:
+                                    continue
+
+                            if fallback_response is not None:
+                                # increment attempts and show which provider was used
+                                st.session_state["fallback_attempts"] = attempts + 1
+                                response = fallback_response
+                                st.info(f"Resposta obtida via fallback no provedor: {used_provider}")
+                            else:
+                                st.error("Quota excedida e nenhum provedor alternativo disponível/configurado.")
+                    else:
+                        st.error(f"Erro ao processar: {e}")
 
             # 3. Exibe e salva resposta
             if response is not None:
