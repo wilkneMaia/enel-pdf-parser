@@ -89,7 +89,7 @@ def render_financial_flow(df_fin_view):
         fig_pie.update_layout(
             showlegend=False, margin=dict(t=0, b=0, l=0, r=0), height=300
         )
-        st.plotly_chart(fig_pie, use_container_width=True)
+        st.plotly_chart(fig_pie, width='stretch')
 
     # 3. Gráfico de Barras Horizontais (Ranking)
     with col_ranking:
@@ -147,7 +147,7 @@ def render_financial_flow(df_fin_view):
         fig_rank.update_xaxes(
             visible=False
         )  # Remove eixo X (números em baixo) para limpar
-        st.plotly_chart(fig_rank, use_container_width=True)
+        st.plotly_chart(fig_rank, width='stretch')
 
     # --- 4. Gráfico de Evolução (MOVIDO PARA CÁ) ---
     st.divider()
@@ -193,7 +193,7 @@ def render_financial_flow(df_fin_view):
         fig_evolucao.update_layout(
             xaxis_title=None, yaxis_title="Valor (R$)", margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", y=1.1)
         )
-        st.plotly_chart(fig_evolucao, use_container_width=True)
+        st.plotly_chart(fig_evolucao, width='stretch')
 
         # --- 5. INSIGHTS AUTOMÁTICOS (NOVO) ---
         st.markdown("#### 🧠 Análise de Tendência")

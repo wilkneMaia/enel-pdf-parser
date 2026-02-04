@@ -55,7 +55,7 @@ def render_public_lighting(df_fin_view, df_med_view):
             )
             st.dataframe(
                 df_lei_display[["Faixa", "Alíquota (%)"]],
-                use_container_width=True,
+                width='stretch',
                 hide_index=True,
             )
         else:
@@ -256,7 +256,7 @@ def render_public_lighting(df_fin_view, df_med_view):
             height=400,
             legend=dict(orientation="h", y=1.1),
         )
-        st.plotly_chart(fig_aliq, use_container_width=True)
+        st.plotly_chart(fig_aliq, width='stretch')
 
     with c_table:
         if not divergencias.empty:
@@ -277,7 +277,7 @@ def render_public_lighting(df_fin_view, df_med_view):
 
             st.dataframe(
                 out_df[["Referência", "Consumo", "Lei", "Real", "Diff"]],
-                use_container_width=True,
+                width='stretch',
                 hide_index=True,
                 height=400,  # Altura sincronizada com o gráfico
             )
@@ -306,7 +306,7 @@ def render_public_lighting(df_fin_view, df_med_view):
             color_discrete_map={"R$ Pago": "#EF553B", "R$ Lei": "#00CC96"},
             height=350,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     with col2:
         st.write("### 📋 Detalhamento")
@@ -338,5 +338,5 @@ def render_public_lighting(df_fin_view, df_med_view):
                 "Desvio": st.column_config.NumberColumn("Diff", format="%.2f"),
             },
             hide_index=True,
-            use_container_width=True,
+            width='stretch',
         )

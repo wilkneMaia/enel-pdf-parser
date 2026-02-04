@@ -9,8 +9,8 @@ from src.database.manager import load_data
 # Tenta importar PandasAI, se não tiver, avisa o usuário
 try:
     from pandasai import SmartDataframe
-    from pandasai.llm import GoogleGemini
-    import google.generativeai as genai
+    from pandasai.llm import LLM
+    from google import genai
     PANDASAI_AVAILABLE = True
     import_error = None
 except Exception as e:
@@ -59,29 +59,71 @@ if "gemini_api_key" not in st.session_state:
 cols_relevantes = ['Referência', 'Itens de Fatura', 'Valor (R$)', 'Quant.', 'Unid.', 'Nº do Cliente']
 df_ia = df_faturas[ [c for c in cols_relevantes if c in df_faturas.columns] ].copy()
 
+# --- ENRIQUECIMENTO DE DADOS PARA IA ---
+# 1. Classificação de Itens (Para a IA não se perder em nomes técnicos)
+def classificar_item_ia(nome):
+    nome_upper = str(nome).upper()
+    if any(x in nome_upper for x in ["CIP", "ILUM", "PUB", "MUNICIPAL"]):
+        return "Iluminação Pública"
+    if any(x in nome_upper for x in ["BANDEIRA", "AMARELA", "VERMELHA", "ESCASSEZ"]):
+        return "Bandeiras Tarifárias"
+    if any(x in nome_upper for x in ["MULTA", "JUROS", "ATUALIZAÇÃO"]):
+        return "Multas e Juros"
+    if any(x in nome_upper for x in ["TRIBUTO", "IMPOSTO", "ICMS", "PIS", "COFINS"]):
+        return "Impostos"
+    return "Energia e Outros"
+
+df_ia["Categoria"] = df_ia["Itens de Fatura"].apply(classificar_item_ia)
+
+# 2. Extração de Ano (Para facilitar filtros de tempo)
+def extrair_ano(ref):
+    parts = str(ref).split('/')
+    return parts[-1].strip() if len(parts) > 1 else str(ref)
+
+df_ia["Ano"] = df_ia["Referência"].apply(extrair_ano)
+
 # 4. Instância do PandasAI
-# Configura a biblioteca base do Google diretamente para evitar defaults antigos
-genai.configure(api_key=st.session_state["gemini_api_key"])
+
+# Adapter customizado para usar google-genai (novo SDK) com PandasAI
+class GoogleGenaiAdapter(LLM):
+    def __init__(self, api_key: str, model: str = "gemini-1.5-flash"):
+        self.api_key = api_key
+        self.model = model
+        self.client = genai.Client(api_key=api_key)
+
+    @property
+    def type(self) -> str:
+        return "google-genai"
+
+    def call(self, instruction, value, suffix="") -> str:
+        # Instrução de segurança para restringir o escopo da IA
+        safety_prompt = (
+            "\n\n[SYSTEM INSTRUCTION]\n"
+            "You are an assistant specialized in energy bill analysis (Enel PDF Parser). "
+            "The dataset has been enriched with columns 'Categoria' and 'Ano' to help you.\n"
+            "1. USE 'Categoria' column for filtering items. Categories are: 'Iluminação Pública', 'Bandeiras Tarifárias', 'Multas e Juros', 'Impostos', 'Energia e Outros'.\n"
+            "   Example: If asked about 'Iluminação Pública', filter `df[df['Categoria'] == 'Iluminação Pública']`.\n"
+            "2. USE 'Ano' column for filtering by year (it contains strings like '2024', '2025').\n"
+            "You MUST ONLY answer questions related to the provided data (consumption, costs, dates, taxes) or the system. "
+            "If the user asks about unrelated topics (general knowledge, sports, jokes, politics), DO NOT generate code. "
+            "Instead, reply directly in Portuguese: 'Desculpe, só posso responder perguntas sobre seus dados de energia.'"
+        )
+        prompt = f"{instruction}\n{safety_prompt}\n{value}\n{suffix}"
+        response = self.client.models.generate_content(
+            model=self.model,
+            contents=prompt
+        )
+        return response.text
 
 # Função para listar modelos Gemini (compatível com variações do SDK)
 def fetch_gemini_models():
     try:
-        model_names = []
-        try:
-            resp = genai.list_models()
-            if hasattr(resp, 'models'):
-                model_names = [m.name for m in resp.models]
-            else:
-                model_names = [getattr(m, 'name', str(m)) for m in resp]
-            return [m for m in model_names if 'gemini' in m.lower()], resp, None
-        except Exception:
-            resp = genai.models.list()
-            model_names = [m.name for m in resp.models]
-            return [m for m in model_names if 'gemini' in m.lower()], resp, None
-    except NameError as ne:
-        return [], None, f"SDK google.generativeai não encontrado: {ne}"
+        client = genai.Client(api_key=st.session_state["gemini_api_key"])
+        resp = list(client.models.list())
+        model_names = [m.name for m in resp]
+        return [m for m in model_names if 'gemini' in m.lower()], str(resp), None
     except Exception as e:
-        return [], None, str(e)
+        return [], None, f"Erro ao listar modelos: {str(e)}"
 
 # Inicializa cache de modelos em sessão (faz a primeira carga automática)
 if 'gemini_models' not in st.session_state:
@@ -92,26 +134,7 @@ if 'gemini_models' not in st.session_state:
 
 # Helper para (re)instanciar GoogleGemini com um modelo específico
 def rebuild_llm_with_model(model_name: str):
-    new_llm = GoogleGemini(api_key=st.session_state["gemini_api_key"])
-    try:
-        new_llm.model = model_name
-    except Exception:
-        pass
-    if hasattr(new_llm, '_model'):
-        try:
-            new_llm._model = model_name
-        except Exception:
-            pass
-    # Alguns wrappers internos podem manter referência ao cliente; tenta atualizar também
-    try:
-        if hasattr(new_llm, 'google_gemini') and hasattr(new_llm.google_gemini, '_client'):
-            try:
-                setattr(new_llm.google_gemini, 'model', model_name)
-            except Exception:
-                pass
-    except Exception:
-        pass
-    return new_llm
+    return GoogleGenaiAdapter(api_key=st.session_state["gemini_api_key"], model=model_name)
 
 # UI: seleção e recarga de modelos
 col_models1, col_models2 = st.columns([3, 1])
@@ -153,7 +176,7 @@ with col_models2:
             st.warning(f"Não foi possível salvar log: {e}")
 
 # Instancia o LLM com o modelo selecionado (CRUCIAL: passar o modelo no construtor)
-llm = GoogleGemini(api_key=st.session_state["gemini_api_key"], model=selected_model)
+llm = GoogleGenaiAdapter(api_key=st.session_state["gemini_api_key"], model=selected_model)
 
 # Retorna o modelo efetivo usado nas chamadas (prefixa com 'models/' quando necessário)
 def get_effective_model():
@@ -162,130 +185,94 @@ def get_effective_model():
         return f"models/{m}"
     return m
 
-# Aplica um wrapper em genai.generate_content (e tentativas em classes internas) para garantir que o modelo usado seja o selecionado
-def patch_genai_generate_content():
-    try:
-        patched = False
-        if hasattr(genai, 'generate_content'):
-            orig = genai.generate_content
-            def wrapped(*args, **kwargs):
-                model = get_effective_model()
-                if model:
-                    kwargs.setdefault('model', model)
-                return orig(*args, **kwargs)
-            genai.generate_content = wrapped
-            patched = True
-
-        if hasattr(genai, 'generative_models'):
-            gm = genai.generative_models
-            for attr_name in dir(gm):
-                attr = getattr(gm, attr_name)
-                try:
-                    if isinstance(attr, type) and hasattr(attr, 'generate_content'):
-                        orig2 = attr.generate_content
-                        def make_wrapped(orig_method):
-                            def wrapped_method(self, *args, **kwargs):
-                                model = get_effective_model()
-                                if model:
-                                    kwargs.setdefault('model', model)
-                                return orig_method(self, *args, **kwargs)
-                            return wrapped_method
-                        setattr(attr, 'generate_content', make_wrapped(orig2))
-                        patched = True
-                except Exception:
-                    continue
-
-        st.session_state['genai_patched'] = patched
-        return patched
-    except Exception as e:
-        st.session_state['genai_patched'] = False
-        st.warning(f"Falha ao aplicar patch em genai.generate_content: {e}")
-        return False
-
-# Aplica o patch imediatamente para interceptar chamadas internas
-patch_genai_generate_content()
-
 with st.expander("🔧 Debug: listagem de modelos (mostrar/ocultar)"):
     st.write("Modelos encontrados:", st.session_state.get('gemini_models'))
     st.write("Modelo Selecionado para Uso:", selected_model)
     st.write("Modelo efetivo (para SDK):", get_effective_model())
-    st.write("genai patched:", st.session_state.get('genai_patched'))
     st.write("Erro:", st.session_state.get('gemini_models_last_error'))
     st.write("Resposta bruta:", st.session_state.get('gemini_models_raw'))
 
-sdf = SmartDataframe(df_ia, config={"llm": llm, "verbose": True})
+sdf = SmartDataframe(df_ia, config={
+    "llm": llm,
+    "verbose": True,
+    "custom_whitelisted_dependencies": ["locale"]
+})
 
 # 5. Interface de Chat
 st.divider()
 
-col_chat, col_tips = st.columns([2, 1])
-
-with col_tips:
+with st.sidebar:
+    st.divider()
     st.markdown("### 💡 Sugestões")
     st.markdown("- *Qual foi o total gasto em 2024?*")
     st.markdown("- *Qual o mês com a fatura mais cara?*")
     st.markdown("- *Quanto paguei de Iluminação Pública no total?*")
-    st.markdown("- *Faça um gráfico de barras dos gastos por mês.*")
+    # st.markdown("- *Faça um gráfico de barras dos gastos por mês.*")
 
-with col_chat:
-    prompt = st.text_area("💬 Pergunte aos seus dados:", placeholder="Ex: Qual a média de gastos nos últimos 3 meses?")
+# Inicializa histórico de mensagens
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
 
-    if st.button("🚀 Analisar"):
-        if prompt:
-            with st.spinner("🤖 A IA está analisando seus dados..."):
+# Exibe mensagens anteriores
+for msg in st.session_state["messages"]:
+    avatar = "👤" if msg["role"] == "user" else "🤖"
+    with st.chat_message(msg["role"], avatar=avatar):
+        st.write(msg["content"])
+
+# Input de Chat (Fixo na parte inferior)
+if prompt := st.chat_input("💬 Pergunte aos seus dados (Ex: Qual a média de gastos?)"):
+    # 1. Exibe mensagem do usuário
+    st.chat_message("user", avatar="👤").write(prompt)
+    st.session_state["messages"].append({"role": "user", "content": prompt})
+
+    # 2. Processamento da IA
+    with st.chat_message("assistant", avatar="🤖"):
+        with st.spinner("🤖 Analisando..."):
+            response = None
+            try:
+                response = sdf.chat(prompt)
+            except Exception as e:
+                err_str = str(e)
+                # Log silencioso
                 try:
-                    response = sdf.chat(prompt)
-                except Exception as e:
-                    err_str = str(e)
-                    st.error(f"Erro ao processar: {e}")
-                    st.info(f"Modelo efetivo usado na requisição: {get_effective_model()}")
-                    # Salva log com stacktrace
-                    try:
-                        os.makedirs('logs', exist_ok=True)
-                        fname = os.path.join('logs', f'pandasai_error_{datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")}.log')
-                        with open(fname, 'w', encoding='utf-8') as fh:
-                            fh.write(traceback.format_exc())
-                        st.info(f"Detalhes do erro salvos em {fname}")
-                    except Exception as log_e:
-                        st.warning(f"Falha ao salvar log de erro: {log_e}")
+                    os.makedirs('logs', exist_ok=True)
+                    fname = os.path.join('logs', f'pandasai_error_{datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")}.log')
+                    with open(fname, 'w', encoding='utf-8') as fh:
+                        fh.write(traceback.format_exc())
+                except: pass
 
-                    # Tenta recuperar de erros relacionados a modelos indisponíveis
-                    if '404' in err_str or 'models/gemini-pro' in err_str or ('not found' in err_str.lower() and 'model' in err_str.lower()) or ('model' in err_str.lower() and 'not found' in err_str.lower()):
-                        st.info("Erro relacionado a modelo detectado. Tentando trocar para um modelo disponível e reenviar a requisição...")
-                        models, raw, errm = fetch_gemini_models()
-                        st.session_state['gemini_models'] = models
-                        st.session_state['gemini_models_raw'] = repr(raw)
-                        st.session_state['gemini_models_last_error'] = errm
-                        if models:
-                            new_model = models[0]
-                            st.success(f"Tentando novo modelo: {new_model}")
-                            # Atualiza seleção em sessão e reaplica o patch para garantir que o SDK use esse modelo
-                            st.session_state['gemini_model'] = new_model
-                            patch_genai_generate_content()
-                            new_llm = rebuild_llm_with_model(new_model)
-                            new_sdf = SmartDataframe(df_ia, config={"llm": new_llm, "verbose": True})
-                            try:
-                                response = new_sdf.chat(prompt)
-                                # Atualiza referências para seguintes interações
-                                sdf = new_sdf
-                                llm = new_llm
-                            except Exception as e2:
-                                st.error(f"Reenvio com novo modelo falhou: {e2}")
-                                with st.expander("📄 Detalhes do erro (mostrar/ocultar)"):
-                                    st.exception(e2)
-                                response = None
-                        else:
-                            st.warning("Nenhum modelo alternativo disponível.")
-                            response = None
+                # Lógica de Retry (Modelo não encontrado)
+                if "No code found" in err_str:
+                    st.warning("⚠️ Desculpe, só posso responder perguntas relacionadas aos seus dados de energia ou ao funcionamento do sistema.")
+
+                elif '404' in err_str or 'not found' in err_str.lower():
+                    st.warning("Modelo indisponível. Tentando alternativo...")
+                    models, _, _ = fetch_gemini_models()
+                    if models:
+                        new_model = models[0]
+                        st.session_state['gemini_model'] = new_model
+                        new_llm = rebuild_llm_with_model(new_model)
+                        new_sdf = SmartDataframe(df_ia, config={
+                            "llm": new_llm,
+                            "verbose": True,
+                            "custom_whitelisted_dependencies": ["locale"]
+                        })
+                        try:
+                            response = new_sdf.chat(prompt)
+                        except Exception as e2:
+                            st.error(f"Falha no reenvio: {e2}")
                     else:
-                        # Mostrar detalhes para debug
-                        with st.expander("📄 Detalhes do erro (mostrar/ocultar)"):
-                            st.exception(e)
-                        response = None
+                        st.error(f"Erro: {e}")
+                else:
+                    st.error(f"Erro ao processar: {e}")
 
-                # Se houve resposta, mostrar
-                if 'response' in locals() and response is not None:
-                    st.markdown("### 📝 Resposta:")
+            # 3. Exibe e salva resposta
+            if response is not None:
+                # Intercepta erro de "No code found" retornado como texto pelo PandasAI
+                if isinstance(response, str) and "No code found" in response:
+                    friendly_msg = "⚠️ Desculpe, só posso responder perguntas relacionadas aos seus dados de energia ou ao funcionamento do sistema."
+                    st.warning(friendly_msg)
+                    st.session_state["messages"].append({"role": "assistant", "content": friendly_msg})
+                else:
                     st.write(response)
-        else:
-            st.warning("Digite uma pergunta para começar.")
+                    st.session_state["messages"].append({"role": "assistant", "content": response})
