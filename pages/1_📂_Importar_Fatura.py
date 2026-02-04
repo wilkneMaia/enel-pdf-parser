@@ -23,6 +23,9 @@ st.markdown("Faça o upload da sua conta de energia (PDF) para alimentar os grá
 if "uploader_key" not in st.session_state:
     st.session_state["uploader_key"] = 0
 
+if "preview_data" not in st.session_state:
+    st.session_state["preview_data"] = None
+
 uploaded_file = st.file_uploader(
     "Escolha o arquivo PDF (Enel)",
     type=["pdf"],
@@ -39,84 +42,92 @@ password = st.text_input(
 if uploaded_file is not None:
     st.divider()
 
-    col_btn, col_status = st.columns([1, 2])
+    # 1. Verifica se o arquivo mudou (limpa preview antigo)
+    if (
+        st.session_state["preview_data"]
+        and st.session_state["preview_data"]["filename"] != uploaded_file.name
+    ):
+        st.session_state["preview_data"] = None
 
-    with col_btn:
-        processar = st.button(
-            "🚀 Processar Arquivo", type="primary", use_container_width=True
-        )
-
-    if processar:
-        with st.status("Processando...", expanded=True) as status:
+    # 2. Se não tem preview, processa automaticamente
+    if st.session_state["preview_data"] is None:
+        with st.status("Lendo arquivo...", expanded=True) as status:
             temp_path = None
             try:
-                # 1. Desbloqueio
+                # A. Desbloqueio
                 st.write("🔓 Verificando criptografia...")
-
-                # Se o usuário digitou senha, usamos. Se não, tentamos sem.
                 senha_teste = password if password else None
                 temp_path = unlock_pdf_file(uploaded_file, password=senha_teste)
 
                 if not temp_path:
-                    # Se falhou, verificamos se é porque tem senha e o usuário não digitou
                     if check_is_encrypted(uploaded_file) and not password:
-                        status.update(label="Erro: Arquivo Protegido", state="error")
-                        st.error(
-                            "🔒 Este arquivo precisa de senha. Digite-a no campo acima e tente novamente."
-                        )
+                        status.update(label="Erro: Senha Necessária", state="error")
+                        st.error("🔒 Arquivo protegido. Informe a senha acima.")
                         st.stop()
                     else:
                         status.update(label="Erro no Desbloqueio", state="error")
-                        st.error(
-                            "❌ Falha ao abrir o PDF. Verifique se o arquivo está válido."
-                        )
+                        st.error("❌ Falha ao abrir o PDF.")
                         st.stop()
 
-                # 2. Extração
-                st.write("📝 Extraindo dados inteligentes...")
+                # B. Extração
+                st.write("📝 Extraindo dados...")
                 df_fin, df_med = extract_data_from_pdf(temp_path)
 
                 if df_fin.empty:
                     status.update(label="Erro de Leitura", state="error")
-                    st.error(
-                        "⚠️ Não conseguimos ler os dados financeiros. O layout pode ser incompatível."
-                    )
+                    st.error("⚠️ Nenhum dado financeiro encontrado.")
                     st.stop()
 
-                # Mostra o que achou (Feedback Rápido)
+                # C. Sucesso -> Salva no Estado
                 ref = (
                     df_fin["Referência"].iloc[0]
                     if "Referência" in df_fin.columns
                     else "Desconhecido"
                 )
-                total = df_fin["Valor (R$)"].sum()
-                st.write(f"✅ Fatura identificada: **{ref}** (Total: R$ {total:.2f})")
-
-                # 3. Salvamento
-                st.write("💾 Salvando no banco de dados...")
-                sucesso = save_data(df_fin, df_med)
-
-                if sucesso:
-                    status.update(label="Concluído!", state="complete")
-                    st.balloons()
-                    st.success(f"Fatura de **{ref}** importada com sucesso!")
-
-                    # Reset do Uploader para permitir novo arquivo
-                    time.sleep(2)
-                    st.session_state["uploader_key"] += 1
-                    st.rerun()
-                else:
-                    status.update(label="Erro ao Salvar", state="error")
-                    st.error("Erro ao escrever no banco de dados.")
+                st.session_state["preview_data"] = {
+                    "filename": uploaded_file.name,
+                    "fin": df_fin,
+                    "med": df_med,
+                    "ref": ref,
+                }
+                status.update(label="Leitura Concluída!", state="complete")
+                st.rerun()
 
             except Exception as e:
                 status.update(label="Erro Inesperado", state="error")
                 st.error(f"Ocorreu um erro: {e}")
-
             finally:
-                # Limpeza
                 if temp_path and os.path.exists(temp_path):
                     os.remove(temp_path)
+
+    # 3. Se TEM preview, mostra tabela e confirmação
+    else:
+        data = st.session_state["preview_data"]
+        st.info(f"✅ Fatura identificada: **{data['ref']}**")
+
+        st.markdown("### 📝 Conferência dos Dados")
+        st.dataframe(data["fin"], use_container_width=True, hide_index=True)
+
+        c_save, c_cancel = st.columns([1, 1])
+
+        with c_save:
+            if st.button("💾 Confirmar e Salvar", type="primary", use_container_width=True):
+                if save_data(data["fin"], data["med"]):
+                    st.success(f"Fatura **{data['ref']}** salva com sucesso!")
+
+                    # Reset total para próxima importação
+                    st.session_state["preview_data"] = None
+                    st.session_state["uploader_key"] += 1
+                    time.sleep(2)
+                    st.rerun()
+                else:
+                    st.error("Erro ao escrever no banco de dados.")
+
+        with c_cancel:
+            if st.button("❌ Cancelar", use_container_width=True):
+                st.session_state["preview_data"] = None
+                st.session_state["uploader_key"] += 1
+                st.rerun()
 
 # --- DICA DE RODAPÉ ---
 else:
