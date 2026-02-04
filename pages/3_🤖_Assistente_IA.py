@@ -9,7 +9,12 @@ from datetime import datetime
 from src.database.manager import load_data
 
 # Importa os wrappers e factory
-from src.services.llm_client import available_providers, list_models, create_adapter, ProviderUnavailable
+from src.services.llm_client import (
+    available_providers,
+    list_models,
+    create_adapter,
+    ProviderUnavailable,
+)
 from src.services.agent_factory import create_agent, available_backends
 from src.services.logger import write_llm_log
 
@@ -26,7 +31,9 @@ st.markdown(
 # Verificar disponibilidade de backends
 backends_available = available_backends()
 if not backends_available:
-    st.error("⚠️ Nenhum backend de análise disponível. Instale `pandasai` ou `langchain`.")
+    st.error(
+        "⚠️ Nenhum backend de análise disponível. Instale `pandasai` ou `langchain`."
+    )
     st.stop()
 
 # 1. Carregar Dados
@@ -88,14 +95,20 @@ installed = set(available_providers())
 providers = all_providers
 
 with st.expander(
-    "⚙️ Configuração da IA (Backend & Provedor de LLM)", expanded=not st.session_state.get("api_key_configured_any", False)
+    "⚙️ Configuração da IA (Backend & Provedor de LLM)",
+    expanded=not st.session_state.get("api_key_configured_any", False),
 ):
-    st.info("Escolha o backend de análise, o provedor de IA e insira a API Key correspondente.")
+    st.info(
+        "Escolha o backend de análise, o provedor de IA e insira a API Key correspondente."
+    )
 
     # Seletor de Backend
     st.subheader("Backend de Análise")
     backend_options = backends_available
-    backend_labels = [f"{b.upper()} {'(disponível)' if b in backend_options else '(não instalado)'}" for b in ["pandasai", "langchain"]]
+    backend_labels = [
+        f"{b.upper()} {'(disponível)' if b in backend_options else '(não instalado)'}"
+        for b in ["pandasai", "langchain"]
+    ]
     backend_choice = st.radio(
         "Qual backend deseja usar?",
         backend_labels,
@@ -110,9 +123,17 @@ with st.expander(
     # Seletor de Provedor LLM
     st.subheader("Provedor de LLM")
     # Mostra todas as opções, indicando se o SDK está presente
-    provider_labels = [f"{p} {'(instalado)' if p in installed else '(SDK não instalado)'}" for p in providers]
+    provider_labels = [
+        f"{p} {'(instalado)' if p in installed else '(SDK não instalado)'}"
+        for p in providers
+    ]
     sel_index = 0
-    provider_choice = st.selectbox("Selecione um provedor de IA:", provider_labels, index=sel_index, key="llm_provider")
+    provider_choice = st.selectbox(
+        "Selecione um provedor de IA:",
+        provider_labels,
+        index=sel_index,
+        key="llm_provider",
+    )
     provider = providers[provider_labels.index(provider_choice)]
 
     api_key_label = {
@@ -122,35 +143,47 @@ with st.expander(
     }.get(provider, "API Key")
 
     api_key_input = st.text_input(
-        f"Insira sua {api_key_label}:", type="password", key=f"llm_api_key_input_{provider}",
-        help="Armazene sua chave com cuidado. Você também pode configurar via variáveis ambiente."
+        f"Insira sua {api_key_label}:",
+        type="password",
+        key=f"llm_api_key_input_{provider}",
+        help="Armazene sua chave com cuidado. Você também pode configurar via variáveis ambiente.",
     )
 
     if api_key_input:
         # Store temporarily in session for convenience; recommend using st.secrets for persistence
         st.session_state[f"llm_api_key_{provider}"] = api_key_input
         st.session_state["api_key_configured_any"] = True
-        st.success("API Key configurada para provedor selecionado! Você pode fechar esta aba.")
-        st.info("Dica: para segurança, adicione sua chave em Streamlit Secrets (arquivo .streamlit/secrets.toml) ou em variáveis de ambiente. Exemplo (secrets.toml):\n[llm_api_keys]\n" + f"{provider} = \"<SUA_API_KEY>\"")
+        st.success(
+            "API Key configurada para provedor selecionado! Você pode fechar esta aba."
+        )
+        st.info(
+            "Dica: para segurança, adicione sua chave em Streamlit Secrets (arquivo .streamlit/secrets.toml) ou em variáveis de ambiente. Exemplo (secrets.toml):\n[llm_api_keys]\n"
+            + f'{provider} = "<SUA_API_KEY>"'
+        )
 
     if f"llm_api_key_{provider}" not in st.session_state:
         st.warning("🔒 Aguardando API Key para iniciar o LLM selecionado...")
         if provider not in installed:
-            st.info("Observação: o SDK para este provedor não está instalado no ambiente. Você ainda pode inserir a API Key e usar a opção manual de modelo, mas algumas funcionalidades (ex: listagem automática de modelos) podem não funcionar até instalar o SDK correspondente.")
+            st.info(
+                "Observação: o SDK para este provedor não está instalado no ambiente. Você ainda pode inserir a API Key e usar a opção manual de modelo, mas algumas funcionalidades (ex: listagem automática de modelos) podem não funcionar até instalar o SDK correspondente."
+            )
         st.stop()
 
     models_key = f"llm_{provider}_models"
+
     def get_api_key(p: str):
         # Prefer st.secrets > env var > session_state
         try:
-            if hasattr(st, 'secrets') and isinstance(st.secrets, dict):
-                keys = st.secrets.get('llm_api_keys') or {}
+            if hasattr(st, "secrets") and isinstance(st.secrets, dict):
+                keys = st.secrets.get("llm_api_keys") or {}
                 if keys and keys.get(p):
                     return keys.get(p)
         except Exception:
             pass
         # Env var fallback
-        env_key = os.environ.get(f"LLM_API_KEY_{p.upper()}") or os.environ.get(f"{p.upper()}_API_KEY")
+        env_key = os.environ.get(f"LLM_API_KEY_{p.upper()}") or os.environ.get(
+            f"{p.upper()}_API_KEY"
+        )
         if env_key:
             return env_key
         return st.session_state.get(f"llm_api_key_{p}")
@@ -191,7 +224,15 @@ with st.expander(
             st.session_state[f"{models_key}_last_error"] = err
             # structured log (sanitized)
             try:
-                write_llm_log(f"{provider}_models_list", {"provider": provider, "models_count": len(models), "error": err, "api_key_provided": bool(api_key_val)})
+                write_llm_log(
+                    f"{provider}_models_list",
+                    {
+                        "provider": provider,
+                        "models_count": len(models),
+                        "error": err,
+                        "api_key_provided": bool(api_key_val),
+                    },
+                )
             except Exception:
                 pass
             st.experimental_rerun()
@@ -206,22 +247,35 @@ with st.expander(
                 st.error(f"Teste falhou: {err}")
             else:
                 count = len(models)
-                st.success(f"Conexão OK — {count} modelo(s) encontrados para {provider}.")
+                st.success(
+                    f"Conexão OK — {count} modelo(s) encontrados para {provider}."
+                )
                 if models:
                     st.info(f"Exemplo: {models[0]}")
             # structured log
             try:
-                write_llm_log(f"{provider}_models_test", {"provider": provider, "models_count": len(models), "error": err, "api_key_provided": bool(api_key_val)})
+                write_llm_log(
+                    f"{provider}_models_test",
+                    {
+                        "provider": provider,
+                        "models_count": len(models),
+                        "error": err,
+                        "api_key_provided": bool(api_key_val),
+                    },
+                )
             except Exception:
                 pass
 
 # Helper para (re)instanciar adapter LLM com modelo específico
 
+
 def rebuild_llm_with_model(provider_name: str, model_name: str):
     try:
         api_key = st.session_state.get(f"llm_api_key_{provider_name}")
         if not api_key:
-            raise ProviderUnavailable("API key não configurada para o provedor selecionado")
+            raise ProviderUnavailable(
+                "API key não configurada para o provedor selecionado"
+            )
         return create_adapter(provider_name, api_key, model_name)
     except ProviderUnavailable as e:
         st.error(f"Erro ao construir LLM adapter: {e}")
@@ -239,9 +293,13 @@ def call_with_quota_retry(fn, max_retries: int = 4):
             return fn()
         except Exception as e:
             msg = str(e)
-            if "resource_exhausted" in msg.lower() or "quota" in msg.lower() or "429" in msg:
+            if (
+                "resource_exhausted" in msg.lower()
+                or "quota" in msg.lower()
+                or "429" in msg
+            ):
                 # try to parse suggested retry delay
-                m = re.search(r'retry in (\d+(?:\.\d+)?)s', msg, re.IGNORECASE)
+                m = re.search(r"retry in (\d+(?:\.\d+)?)s", msg, re.IGNORECASE)
                 if m:
                     wait = float(m.group(1)) + 1.0
                 else:
@@ -251,6 +309,7 @@ def call_with_quota_retry(fn, max_retries: int = 4):
                 continue
             raise
     raise RuntimeError("Max retries exceeded")
+
 
 # Instancia o LLM com o modelo selecionado
 llm = rebuild_llm_with_model(provider, selected_model)
@@ -367,7 +426,9 @@ if prompt := st.chat_input("💬 Pergunte aos seus dados (Ex: Qual a média de g
                         new_llm = rebuild_llm_with_model(provider, new_model)
                         if new_llm is not None:
                             try:
-                                new_api_key = st.session_state.get(f"llm_api_key_{provider}")
+                                new_api_key = st.session_state.get(
+                                    f"llm_api_key_{provider}"
+                                )
                                 new_agent = create_agent(
                                     backend=backend,
                                     df=df_ia,
@@ -386,18 +447,28 @@ if prompt := st.chat_input("💬 Pergunte aos seus dados (Ex: Qual a média de g
                             except Exception as e2:
                                 st.error(f"Falha no reenvio: {e2}")
                         else:
-                            st.error("Não foi possível instanciar o adapter para o novo modelo.")
+                            st.error(
+                                "Não foi possível instanciar o adapter para o novo modelo."
+                            )
                     else:
                         st.error(f"Erro: {e}")
                 else:
                     # Try automatic fallback for quota errors
-                    if "resource_exhausted" in err_str.lower() or "quota" in err_str.lower() or "429" in err_str:
-                        st.warning("Quota do provedor detectada — tentando provedores alternativos...")
+                    if (
+                        "resource_exhausted" in err_str.lower()
+                        or "quota" in err_str.lower()
+                        or "429" in err_str
+                    ):
+                        st.warning(
+                            "Quota do provedor detectada — tentando provedores alternativos..."
+                        )
                         # limit fallback attempts per session to avoid loops
                         max_fallbacks = 3
                         attempts = st.session_state.get("fallback_attempts", 0)
                         if attempts >= max_fallbacks:
-                            st.error("Número máximo de tentativas de fallback atingido nesta sessão.")
+                            st.error(
+                                "Número máximo de tentativas de fallback atingido nesta sessão."
+                            )
                         else:
                             fallback_response = None
                             used_provider = None
@@ -414,11 +485,23 @@ if prompt := st.chat_input("💬 Pergunte aos seus dados (Ex: Qual a média de g
                                         provider=fb,
                                         api_key=fb_key,
                                         model=selected_model,
-                                        config={"verbose": True, "field_descriptions": field_descriptions},
+                                        config={
+                                            "verbose": True,
+                                            "field_descriptions": field_descriptions,
+                                        },
                                     )
-                                    fallback_response = call_with_quota_retry(lambda: fb_agent.chat(prompt))
+                                    fallback_response = call_with_quota_retry(
+                                        lambda: fb_agent.chat(prompt)
+                                    )
                                     used_provider = fb
-                                    write_llm_log("fallback_used", {"from": provider, "to": fb, "prompt": prompt[:100]})
+                                    write_llm_log(
+                                        "fallback_used",
+                                        {
+                                            "from": provider,
+                                            "to": fb,
+                                            "prompt": prompt[:100],
+                                        },
+                                    )
                                     break
                                 except Exception:
                                     continue
@@ -427,9 +510,13 @@ if prompt := st.chat_input("💬 Pergunte aos seus dados (Ex: Qual a média de g
                                 # increment attempts and show which provider was used
                                 st.session_state["fallback_attempts"] = attempts + 1
                                 response = fallback_response
-                                st.info(f"Resposta obtida via fallback no provedor: {used_provider}")
+                                st.info(
+                                    f"Resposta obtida via fallback no provedor: {used_provider}"
+                                )
                             else:
-                                st.error("Quota excedida e nenhum provedor alternativo disponível/configurado.")
+                                st.error(
+                                    "Quota excedida e nenhum provedor alternativo disponível/configurado."
+                                )
                     else:
                         st.error(f"Erro ao processar: {e}")
 

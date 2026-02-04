@@ -5,11 +5,13 @@ Provides:
 - listing models per provider
 - adapters implementing pandasai.llm.LLM interface for use with PandasAI
 """
+
 from typing import List, Tuple, Optional
 
 try:
     from pandasai.llm import LLM
 except Exception:  # pragma: no cover - pandasai not available in some test environments
+
     class LLM:  # type: ignore
         pass
 
@@ -123,7 +125,9 @@ def available_providers() -> List[str]:
     mod_keys = set(sys.modules.keys())
 
     # Google: either already imported or available via installed package
-    google_present = any(k == "google.genai" or k.startswith("google.gen") for k in mod_keys)
+    google_present = any(
+        k == "google.genai" or k.startswith("google.gen") for k in mod_keys
+    )
     if not google_present:
         try:
             if importlib.util.find_spec("google.genai"):
@@ -135,7 +139,9 @@ def available_providers() -> List[str]:
 
     # OpenAI
     try:
-        openai_present = "openai" in mod_keys or importlib.util.find_spec("openai") is not None
+        openai_present = (
+            "openai" in mod_keys or importlib.util.find_spec("openai") is not None
+        )
     except Exception:
         openai_present = "openai" in mod_keys
     if openai_present:
@@ -143,7 +149,9 @@ def available_providers() -> List[str]:
 
     # Anthropic
     try:
-        anthropic_present = "anthropic" in mod_keys or importlib.util.find_spec("anthropic") is not None
+        anthropic_present = (
+            "anthropic" in mod_keys or importlib.util.find_spec("anthropic") is not None
+        )
     except Exception:
         anthropic_present = "anthropic" in mod_keys
     if anthropic_present:

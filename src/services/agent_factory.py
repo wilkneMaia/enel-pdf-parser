@@ -112,7 +112,9 @@ def create_agent(
             )
             return PandasAIAgent(sdf)
         except ImportError:
-            raise ValueError("pandasai package not found. Install with: pip install pandasai")
+            raise ValueError(
+                "pandasai package not found. Install with: pip install pandasai"
+            )
 
     elif backend.lower() == "langchain":
         try:
@@ -121,7 +123,9 @@ def create_agent(
                 from langchain.agents import create_pandas_dataframe_agent
             except Exception:
                 try:
-                    from langchain_experimental.agents import create_pandas_dataframe_agent  # type: ignore
+                    from langchain_experimental.agents import (
+                        create_pandas_dataframe_agent,
+                    )  # type: ignore
                 except Exception as e:
                     raise
 
@@ -133,36 +137,50 @@ def create_agent(
             # Otherwise, build a LangChain-native LLM from provider/api_key/model
             if native_llm is None:
                 if not provider or not api_key:
-                    raise ValueError("provider and api_key are required to create a LangChain LLM")
+                    raise ValueError(
+                        "provider and api_key are required to create a LangChain LLM"
+                    )
 
                 # OpenAI
                 if provider == "openai":
                     try:
                         from langchain.chat_models import ChatOpenAI
 
-                        native_llm = ChatOpenAI(model_name=model or "gpt-4o", openai_api_key=api_key)
+                        native_llm = ChatOpenAI(
+                            model_name=model or "gpt-4o", openai_api_key=api_key
+                        )
                     except Exception:
                         try:
                             # alternative import path
                             from langchain_openai import ChatOpenAI  # type: ignore
 
-                            native_llm = ChatOpenAI(model_name=model or "gpt-4o", openai_api_key=api_key)
+                            native_llm = ChatOpenAI(
+                                model_name=model or "gpt-4o", openai_api_key=api_key
+                            )
                         except Exception as e:
-                            raise ImportError(f"OpenAI LangChain class import failed: {e}")
+                            raise ImportError(
+                                f"OpenAI LangChain class import failed: {e}"
+                            )
 
                 # Anthropic
                 elif provider == "anthropic":
                     try:
                         from langchain.chat_models import ChatAnthropic  # type: ignore
 
-                        native_llm = ChatAnthropic(model=model or "claude-2", anthropic_api_key=api_key)
+                        native_llm = ChatAnthropic(
+                            model=model or "claude-2", anthropic_api_key=api_key
+                        )
                     except Exception:
                         try:
                             from langchain_anthropic import ChatAnthropic  # type: ignore
 
-                            native_llm = ChatAnthropic(model=model or "claude-2", anthropic_api_key=api_key)
+                            native_llm = ChatAnthropic(
+                                model=model or "claude-2", anthropic_api_key=api_key
+                            )
                         except Exception as e:
-                            raise ImportError(f"Anthropic LangChain class import failed: {e}")
+                            raise ImportError(
+                                f"Anthropic LangChain class import failed: {e}"
+                            )
 
                 # Google Genie / GenAI
                 elif provider == "google":
@@ -170,26 +188,48 @@ def create_agent(
                         # try canonical langchain chat model
                         from langchain.chat_models import ChatGoogleGemini  # type: ignore
 
-                        native_llm = ChatGoogleGemini(model=model or "gemini-1.5-flash", google_api_key=api_key)
+                        native_llm = ChatGoogleGemini(
+                            model=model or "gemini-1.5-flash", google_api_key=api_key
+                        )
                     except Exception:
                         try:
                             # fallback to langchain-google-genai package
                             from langchain_google_genai import ChatGoogleGenerativeAI  # type: ignore
 
-                            native_llm = ChatGoogleGenerativeAI(model=model or "gemini-1.5-flash", api_key=api_key)
+                            native_llm = ChatGoogleGenerativeAI(
+                                model=model or "gemini-1.5-flash", api_key=api_key
+                            )
                         except Exception as e:
-                            raise ImportError(f"Google LangChain class import failed: {e}")
+                            raise ImportError(
+                                f"Google LangChain class import failed: {e}"
+                            )
 
                 else:
                     raise ValueError(f"Unsupported provider for LangChain: {provider}")
 
+            # Ajuste automático de tipo de agente e iterações baseado no provedor
+            # 'openai-tools' é específico para OpenAI. Para Gemini/Outros, usamos ReAct.
+            default_agent_type = (
+                "openai-tools"
+                if provider == "openai"
+                else "zero-shot-react-description"
+            )
+            agent_type = config.get("agent_type", default_agent_type)
+
+            # Agentes ReAct precisam de mais passos (Pensar->Código->Resultado->Resposta)
+            # Se a config vier com 1 (padrão do PandasAI), forçamos um mínimo maior para evitar que ele pare no meio.
+            max_iter = config.get("max_iterations", 2)
+            if agent_type == "zero-shot-react-description" and max_iter < 5:
+                max_iter = 5
+
             agent_executor = create_pandas_dataframe_agent(
                 llm=native_llm,
                 df=df,
-                agent_type=config.get("agent_type", "openai-tools"),  # tipo padrão; pode ser customizado
+                agent_type=agent_type,
                 verbose=config.get("verbose", False),
                 allow_dangerous_code=config.get("allow_dangerous_code", False),
-                max_iterations=config.get("max_iterations", 2),
+                max_iterations=max_iter,
+                agent_executor_kwargs={"handle_parsing_errors": True},
             )
             return LangChainAgent(agent_executor)
         except Exception as e:
@@ -209,12 +249,14 @@ def available_backends() -> list[str]:
 
     try:
         import pandasai  # noqa: F401
+
         backends.append("pandasai")
     except ImportError:
         pass
 
     try:
         import langchain  # noqa: F401
+
         backends.append("langchain")
     except ImportError:
         pass
