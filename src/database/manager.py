@@ -84,14 +84,22 @@ def save_data(df_financeiro, df_medicao):
 
     # Salva Financeiro (Chave: Referência + Itens de Fatura para garantir unicidade fina)
     # Mas para substituir o mês inteiro, melhor usar apenas 'Referência' como chave de deleção do antigo
+    keys_fin = ["Referência"]
+    if "Nº do Cliente" in df_financeiro.columns:
+        keys_fin.append("Nº do Cliente")
+
     if not df_financeiro.empty:
         success_fin = _upsert_dataframe(
-            df_financeiro, FILE_FATURAS, keys=["Referência"]
+            df_financeiro, FILE_FATURAS, keys=keys_fin
         )
 
     # Salva Medição
+    keys_med = ["Referência"]
+    if "Nº do Cliente" in df_medicao.columns:
+        keys_med.append("Nº do Cliente")
+
     if not df_medicao.empty:
-        success_med = _upsert_dataframe(df_medicao, FILE_MEDICAO, keys=["Referência"])
+        success_med = _upsert_dataframe(df_medicao, FILE_MEDICAO, keys=keys_med)
 
     return success_fin and success_med
 

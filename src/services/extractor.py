@@ -347,6 +347,7 @@ def extract_data_from_pdf(file_path, password=None):
         return pd.DataFrame(), pd.DataFrame()
 
     reference = raw_data.get("reference", "Not Found")
+    client_id = raw_data.get("client_id", "Desconhecido")
 
     # 2. Converte items financeiros em DataFrame
     items = raw_data.get("items", [])
@@ -354,6 +355,7 @@ def extract_data_from_pdf(file_path, password=None):
         df_fin = pd.DataFrame(items)
         # Adiciona coluna Referência em todas as linhas
         df_fin["Referência"] = reference
+        df_fin["Nº do Cliente"] = client_id
 
         # Converte valores numéricos de string para float
         numeric_cols = [
@@ -384,6 +386,7 @@ def extract_data_from_pdf(file_path, password=None):
         df_med = pd.DataFrame(measurements)
         # Adiciona coluna Referência em todas as linhas
         df_med["Referência"] = reference
+        df_med["Nº do Cliente"] = client_id
 
         # Converte valores numéricos de string para float
         numeric_cols_med = [
@@ -401,7 +404,7 @@ def extract_data_from_pdf(file_path, password=None):
                     df_med[col].astype(str).apply(normalize_negative_value).str.strip()
                 )
                 # Converte para float, ignorando valores vazios ou inválidos
-                df_med[col] = pd.to_numeric(df_med[col], errors="coerce").fillna(0)
+                df_med[col] = pd.to_numeric(df_med[col], errors="coerce")
     else:
         df_med = pd.DataFrame()
 

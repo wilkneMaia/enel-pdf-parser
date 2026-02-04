@@ -63,6 +63,20 @@ def main():
     # 2. Sidebar de Filtros
     st.sidebar.header("🔍 Filtros Globais")
 
+    # Filtro de Cliente (Se houver coluna e dados)
+    if "Nº do Cliente" in df_faturas.columns:
+        # Pega clientes únicos ignorando nulos
+        clientes_unicos = sorted([c for c in df_faturas["Nº do Cliente"].unique() if pd.notnull(c)])
+
+        # Só mostra o filtro se houver clientes identificados
+        if len(clientes_unicos) > 0:
+            cliente_selecionado = st.sidebar.selectbox("👤 Cliente / Instalação", clientes_unicos)
+
+            # Filtra os DataFrames Globais
+            df_faturas = df_faturas[df_faturas["Nº do Cliente"] == cliente_selecionado]
+            if not df_medicao.empty and "Nº do Cliente" in df_medicao.columns:
+                df_medicao = df_medicao[df_medicao["Nº do Cliente"] == cliente_selecionado]
+
     # Filtro de Ano
     anos_disponiveis = get_month_year_filter(df_faturas)
     if anos_disponiveis:
