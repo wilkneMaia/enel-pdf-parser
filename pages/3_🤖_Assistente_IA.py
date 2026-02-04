@@ -6,36 +6,25 @@ import traceback
 from datetime import datetime
 from src.database.manager import load_data
 
-# Tenta importar PandasAI, se não tiver, avisa o usuário
-try:
-    from pandasai import SmartDataframe
-    from pandasai.llm import LLM
-    PANDASAI_AVAILABLE = True
-    import_error = None
-except Exception as e:
-    PANDASAI_AVAILABLE = False
-    import_error = e
-
-# Importa o wrapper LLM (fornece support multi-provedor)
+# Importa os wrappers e factory
 from src.services.llm_client import available_providers, list_models, create_adapter, ProviderUnavailable
+from src.services.agent_factory import create_agent, available_backends
 from src.services.logger import write_llm_log
 
 st.set_page_config(page_title="Assistente IA", page_icon="🤖", layout="wide")
 
-st.title("🤖 Assistente Inteligente (PandasAI)")
+st.title("🤖 Assistente Inteligente")
 st.markdown(
     """
-    Use Inteligência Artificial para conversar com suas faturas.
+    Use Inteligência Artificial para conversa com suas faturas.
     Peça análises, resumos ou gráficos personalizados.
     """
 )
 
-if not PANDASAI_AVAILABLE:
-    st.error("⚠️ A biblioteca `pandasai` foi detectada, mas falhou ao carregar.")
-    st.error(f"**Erro:** `{import_error}`")
-    st.info(
-        "Dica: Se estiver usando `uv`, certifique-se de rodar o streamlit dentro do ambiente correto (ex: `uv run streamlit run ...`)."
-    )
+# Verificar disponibilidade de backends
+backends_available = available_backends()
+if not backends_available:
+    st.error("⚠️ Nenhum backend de análise disponível. Instale `pandasai` ou `langchain`.")
     st.stop()
 
 # 1. Carregar Dados
@@ -89,22 +78,36 @@ def extrair_ano(ref):
 
 df_ia["Ano"] = df_ia["Referência"].apply(extrair_ano)
 
-# 4. Instância do PandasAI
+# 4. Configuração do Backend de Análise e LLM
 
-
-# Multi-provider LLM configuration using src.services.llm_client
-from src.services.llm_client import available_providers, list_models, create_adapter, ProviderUnavailable
-
-# UI: seleção de provedor e configuração de API Keys
-# Sempre oferecemos as opções principais; marcamos quais SDKs estão instalados no ambiente.
+# UI: seleção de backend (PandasAI vs LangChain)
 all_providers = ["google", "openai", "anthropic"]
 installed = set(available_providers())
 providers = all_providers
 
 with st.expander(
-    "⚙️ Configuração da IA (Provedor de LLM)", expanded=not st.session_state.get("api_key_configured_any", False)
+    "⚙️ Configuração da IA (Backend & Provedor de LLM)", expanded=not st.session_state.get("api_key_configured_any", False)
 ):
-    st.info("Escolha o provedor de IA e insira a API Key correspondente.")
+    st.info("Escolha o backend de análise, o provedor de IA e insira a API Key correspondente.")
+    
+    # Seletor de Backend
+    st.subheader("Backend de Análise")
+    backend_options = backends_available
+    backend_labels = [f"{b.upper()} {'(disponível)' if b in backend_options else '(não instalado)'}" for b in ["pandasai", "langchain"]]
+    backend_choice = st.radio(
+        "Qual backend deseja usar?",
+        backend_labels,
+        index=0 if "pandasai" in backends_available else 1,
+        key="agent_backend",
+    )
+    selected_backend = backend_labels.index(backend_choice)
+    backend = ["pandasai", "langchain"][selected_backend]
+    st.session_state["agent_backend"] = backend
+    
+    st.divider()
+    
+    # Seletor de Provedor LLM
+    st.subheader("Provedor de LLM")
     # Mostra todas as opções, indicando se o SDK está presente
     provider_labels = [f"{p} {'(instalado)' if p in installed else '(SDK não instalado)'}" for p in providers]
     sel_index = 0
@@ -232,6 +235,7 @@ llm = rebuild_llm_with_model(provider, selected_model)
 # Debug info para exibir no expander
 
 with st.expander("🔧 Debug: listagem de modelos (mostrar/ocultar)"):
+    st.write("Backend selecionado:", backend)
     st.write("Provedor selecionado:", provider)
     st.write("Modelos encontrados:", st.session_state.get(f"llm_{provider}_models"))
     st.write("Modelo Selecionado para Uso:", selected_model)
@@ -250,15 +254,20 @@ field_descriptions = {
     "Ano": "Ano da fatura extraído da referência (ex: 2024, 2025).",
 }
 
-sdf = SmartDataframe(
-    df_ia,
-    config={
-        "llm": llm,
-        "verbose": True,
-        "custom_whitelisted_dependencies": ["locale"],
-        "field_descriptions": field_descriptions,
-    },
-)
+# Instancia o agente (PandasAI ou LangChain) via factory
+try:
+    agent = create_agent(
+        backend=backend,
+        df=df_ia,
+        llm=llm,
+        config={
+            "verbose": True,
+            "field_descriptions": field_descriptions,
+        },
+    )
+except ValueError as e:
+    st.error(f"Erro ao criar agente: {e}")
+    st.stop()
 
 # 5. Interface de Chat
 st.divider()
@@ -297,7 +306,7 @@ if prompt := st.chat_input("💬 Pergunte aos seus dados (Ex: Qual a média de g
         with st.spinner("🤖 Analisando..."):
             response = None
             try:
-                response = sdf.chat(prompt)
+                response = agent.chat(prompt)
             except Exception as e:
                 err_str = str(e)
                 # Log silencioso
@@ -305,7 +314,7 @@ if prompt := st.chat_input("💬 Pergunte aos seus dados (Ex: Qual a média de g
                     os.makedirs("logs", exist_ok=True)
                     fname = os.path.join(
                         "logs",
-                        f"pandasai_error_{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.log",
+                        f"agent_error_{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.log",
                     )
                     with open(fname, "w", encoding="utf-8") as fh:
                         fh.write(traceback.format_exc())
@@ -327,16 +336,14 @@ if prompt := st.chat_input("💬 Pergunte aos seus dados (Ex: Qual a média de g
                         st.session_state[f"llm_{provider}_selected_model"] = new_model
                         new_llm = rebuild_llm_with_model(provider, new_model)
                         if new_llm is not None:
-                            new_sdf = SmartDataframe(
-                                df_ia,
-                                config={
-                                    "llm": new_llm,
-                                    "verbose": True,
-                                    "custom_whitelisted_dependencies": ["locale"],
-                                },
-                            )
                             try:
-                                response = new_sdf.chat(prompt)
+                                new_agent = create_agent(
+                                    backend=backend,
+                                    df=df_ia,
+                                    llm=new_llm,
+                                    config={"verbose": True, "field_descriptions": field_descriptions},
+                                )
+                                response = new_agent.chat(prompt)
                             except Exception as e2:
                                 st.error(f"Falha no reenvio: {e2}")
                         else:

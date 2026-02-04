@@ -26,6 +26,12 @@ dependencies = [
 
 [dependency-groups]
 dev = ["pytest>=9.0.2", "ruff>=0.14.14", "taskipy>=1.14.1"]
+langchain = [
+    "langchain>=0.1.0",
+    "langchain-openai>=0.1.0",
+    "langchain-google-genai>=0.1.0",
+    "langchain-anthropic>=0.1.0",
+]
 
 [tool.taskipy.tasks]
 lint = "ruff check ."
