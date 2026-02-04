@@ -137,6 +137,9 @@ def render_public_lighting(df_fin_view, df_med_view):
         lambda x: "🔴 Acima" if x > 0.10 else ("🟢 Abaixo" if x < -0.10 else "✅ OK")
     )
 
+    # Diferença de Alíquota para análise
+    df_audit["Diff Alíquota"] = df_audit["Alíquota paga"] - df_audit["Alíquota Lei"]
+
     # --- VISUALIZAÇÃO ---
 
     # 1. KPIs
@@ -172,7 +175,118 @@ def render_public_lighting(df_fin_view, df_med_view):
 
     st.divider()
 
-    # 2. Gráficos e Tabela
+    # 2. Análise Integrada (Métricas + Tabela + Gráfico)
+    st.markdown("### 🧠 Análise de Divergências & Disparidade")
+
+    # Filtra divergências significativas (> 0.1% para ignorar arredondamentos)
+    threshold = 0.1
+    divergencias = df_audit[df_audit["Diff Alíquota"].abs() > threshold].copy()
+
+    # Impacto Financeiro Total
+    total_desvio_rs = df_audit["Desvio"].sum()
+
+    # --- A. Métricas (Topo) ---
+    if not divergencias.empty:
+        # Lógica para o 3º Insight (Pior/Melhor Caso)
+        if total_desvio_rs > 0:
+            # Cenário de Prejuízo: Mostra o mês com maior cobrança indevida
+            idx_destaque = divergencias["Desvio"].idxmax()
+            lbl_destaque = "Pior Mês (Pico)"
+            cor_destaque = "inverse"
+        else:
+            # Cenário de Economia: Mostra o mês com maior desconto
+            idx_destaque = divergencias["Desvio"].idxmin()
+            lbl_destaque = "Melhor Mês"
+            cor_destaque = "normal"
+
+        row_destaque = divergencias.loc[idx_destaque]
+
+        k_qtd, k_val, k_max = st.columns(3)
+        k_qtd.metric("Meses c/ Erro", len(divergencias))
+        k_val.metric(
+            "Impacto R$",
+            f"{total_desvio_rs:,.2f}",
+            delta="Pago a Maior" if total_desvio_rs > 0 else "Economia",
+            delta_color="inverse",
+        )
+        k_max.metric(
+            lbl_destaque,
+            f"R$ {abs(row_destaque['Desvio']):,.2f}",
+            delta=f"Em {row_destaque['Referência']}",
+            delta_color=cor_destaque,
+        )
+    else:
+        st.success("✅ **Tudo Certo!**\n\nTodas as faturas seguiram a alíquota da Lei Municipal.")
+
+    # st.divider()
+
+    # --- B. Visualização Lado a Lado (Gráfico + Tabela) ---
+    c_chart, c_table = st.columns([2, 1.2])
+
+    with c_chart:
+        st.caption("📈 Evolução: Alíquota Legal vs. Real Cobrada")
+        df_melted_aliq = df_audit.melt(
+            id_vars=["Referência"],
+            value_vars=["Alíquota Lei", "Alíquota paga"],
+            var_name="Tipo",
+            value_name="Alíquota (%)",
+        )
+
+        # Ordenação Cronológica
+        try:
+            df_melted_aliq["Data_Ordenacao"] = pd.to_datetime(
+                df_melted_aliq["Referência"], format="%b/%Y", errors="coerce"
+            )
+            df_melted_aliq = df_melted_aliq.sort_values("Data_Ordenacao")
+        except Exception:
+            pass
+
+        fig_aliq = px.line(
+            df_melted_aliq,
+            x="Referência",
+            y="Alíquota (%)",
+            color="Tipo",
+            markers=True,
+            line_shape="spline",
+            color_discrete_map={"Alíquota Lei": "#00CC96", "Alíquota paga": "#EF553B"},
+        )
+        fig_aliq.update_layout(
+            legend_title=None,
+            margin=dict(t=10, b=0, l=0, r=0),
+            height=400,
+            legend=dict(orientation="h", y=1.1),
+        )
+        st.plotly_chart(fig_aliq, use_container_width=True)
+
+    with c_table:
+        if not divergencias.empty:
+            st.caption("📋 Lista de Inconsistências (Lei vs Real)")
+            # Formatação para exibição
+            out_df = divergencias.copy()
+            out_df["Consumo"] = out_df["Consumo kWh"].astype(int).astype(str) + " kWh"
+            out_df["Lei"] = out_df["Alíquota Lei"].map("{:.2f}%".format)
+            out_df["Real"] = out_df["Alíquota paga"].map("{:.2f}%".format)
+            out_df["Diff"] = out_df["Diff Alíquota"].map("{:+.2f}%".format)
+
+            # Ordenação
+            try:
+                out_df["_dt"] = pd.to_datetime(out_df["Referência"], format="%b/%Y", errors="coerce")
+                out_df = out_df.sort_values("_dt")
+            except:
+                pass
+
+            st.dataframe(
+                out_df[["Referência", "Consumo", "Lei", "Real", "Diff"]],
+                use_container_width=True,
+                hide_index=True,
+                height=400,  # Altura sincronizada com o gráfico
+            )
+        else:
+            st.info("Nenhuma inconsistência encontrada.")
+
+    st.divider()
+
+    # 3. Gráficos Financeiros e Tabela
     col1, col2 = st.columns([1.5, 1])
 
     with col1:
