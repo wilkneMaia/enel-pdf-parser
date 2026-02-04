@@ -1,17 +1,19 @@
 import streamlit as st
 import os
 import time
+import pandas as pd
+import plotly.express as px
 
 # --- IMPORTS DA NOVA ARQUITETURA ---
 try:
     from src.services.unlocker import unlock_pdf_file, check_is_encrypted
     from src.services.extractor import extract_data_from_pdf
-    from src.database.manager import save_data
+    from src.database.manager import save_data, load_data
 except ImportError as e:
     st.error(f"Erro de configuração: {e}")
     st.stop()
 
-st.set_page_config(page_title="Importar Fatura", page_icon="📂", layout="centered")
+st.set_page_config(page_title="Importar Fatura", page_icon="📂", layout="wide")
 
 st.title("📂 Importar Nova Fatura")
 st.markdown("Faça o upload da sua conta de energia (PDF) para alimentar os gráficos.")
@@ -103,3 +105,76 @@ if uploaded_file is not None:
 # --- DICA DE RODAPÉ ---
 else:
     st.info("💡 Dica: Você pode importar várias faturas uma por uma para construir seu histórico.")
+
+# --- HISTÓRICO DE IMPORTAÇÕES (Movido de Monitor de Logs) ---
+st.divider()
+st.subheader("📊 Histórico de Importações")
+
+# 1. Carrega Dados Reais do Banco
+df_faturas, df_medicao = load_data()
+
+if not df_faturas.empty:
+    # 2. Resumo Geral
+    total_faturas = df_faturas["Referência"].nunique()
+    ultimo_mes = df_faturas["Referência"].iloc[-1] if not df_faturas.empty else "-"
+    total_gasto = df_faturas["Valor (R$)"].sum()
+
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Faturas no Sistema", total_faturas)
+    k2.metric("Última Referência", ultimo_mes)
+    k3.metric("Total Acumulado (R$)", f"R$ {total_gasto:,.2f}")
+
+    # 3. Gráfico de Evolução do Valor Total
+    st.markdown("### 📈 Evolução do Valor da Conta")
+    df_agrupado = df_faturas.groupby("Referência")["Valor (R$)"].sum().reset_index()
+
+    try:
+        df_agrupado["Data_Ordenacao"] = pd.to_datetime(df_agrupado["Referência"], format="%b/%Y", errors="coerce")
+        df_agrupado = df_agrupado.sort_values("Data_Ordenacao")
+    except:
+        pass
+
+    fig_evolucao = px.line(
+        df_agrupado,
+        x="Referência",
+        y="Valor (R$)",
+        markers=True,
+        line_shape="spline"
+    )
+    fig_evolucao.update_traces(line_color="#00CC96", line_width=3)
+    st.plotly_chart(fig_evolucao, use_container_width=True)
+
+    # 4. Tabela de Detalhes
+    st.markdown("### 📋 Faturas Cadastradas")
+    df_resumo_mes = df_faturas.groupby("Referência").agg({
+        "Valor (R$)": "sum",
+        "Itens de Fatura": "count"
+    }).reset_index()
+    df_resumo_mes.rename(columns={"Itens de Fatura": "Qtd. Itens"}, inplace=True)
+
+    if not df_medicao.empty and "P.Horário/Segmento" in df_medicao.columns:
+        mask_inj = df_medicao["P.Horário/Segmento"].astype(str).str.contains("INJ", case=False, na=False)
+        df_med_agg = df_medicao[~mask_inj].groupby("Referência")["Consumo kWh"].sum().reset_index()
+        df_resumo_mes = pd.merge(df_resumo_mes, df_med_agg, on="Referência", how="left")
+
+    st.dataframe(
+        df_resumo_mes,
+        column_config={
+            "Valor (R$)": st.column_config.NumberColumn("Valor Total", format="R$ %.2f"),
+            "Consumo kWh": st.column_config.NumberColumn("Consumo", format="%d kWh"),
+            "Qtd. Itens": st.column_config.NumberColumn("Itens Extraídos"),
+        },
+        use_container_width=True,
+        hide_index=True
+    )
+
+    with st.expander("🗑️ Zona de Perigo"):
+        st.warning("Isso apagará todo o histórico de faturas.")
+        if st.button("Limpar Banco de Dados Completo"):
+            if os.path.exists("data/database/faturas.parquet"): os.remove("data/database/faturas.parquet")
+            if os.path.exists("data/database/medicao.parquet"): os.remove("data/database/medicao.parquet")
+            st.success("Banco de dados limpo! Recarregue a página.")
+            time.sleep(1)
+            st.rerun()
+else:
+    st.info("📭 O banco de dados está vazio. Importe sua primeira fatura acima para ver o histórico.")
